@@ -21,7 +21,7 @@ if %ERRORLEVEL% NEQ 0 (
 :: Check if node_modules exists, if not install
 if not exist "node_modules\" (
     echo [INFO] Installing required dependencies...
-    call npm install
+    call npm install || call npm install --legacy-peer-deps
 )
 
 :: Launch Node server in the background

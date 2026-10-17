@@ -50,6 +50,10 @@ Write-Host " OK" -ForegroundColor Green
 # 5. Install npm dependencies & build
 Write-Host "[5/5] Installing application dependencies..."
 npm install
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Notice: Retrying npm install with --legacy-peer-deps..." -ForegroundColor Yellow
+    npm install --legacy-peer-deps
+}
 
 Write-Host ""
 Write-Host "Setup Complete! You can now start the theater system with:" -ForegroundColor Green

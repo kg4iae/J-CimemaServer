@@ -4,9 +4,34 @@ This application is designed specifically to run locally on your Windows media P
 
 ---
 
-## 1. Quick Start on Windows
+## 1. Quick Automated Install via PowerShell (From GitHub)
 
-1. Double click **`start-theater.bat`** (or run `npm run dev` in PowerShell / Terminal).
+To install CinemaBooth onto a Windows PC directly from your GitHub repository, open Windows PowerShell and run:
+
+```powershell
+# 1. Download and run the automated installer script:
+irm "https://raw.githubusercontent.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>/main/install-cinemabooth.ps1" | iex
+```
+
+Or clone your repo and run the included installer:
+```powershell
+git clone https://github.com/<YOUR_GITHUB_USERNAME>/<YOUR_REPO_NAME>.git CinemaBooth
+cd CinemaBooth
+.\install-cinemabooth.ps1
+```
+
+The installer will automatically:
+1. Verify or install **Node.js LTS** via winget.
+2. Clone your GitHub repository (or download and extract the ZIP archive if Git is not installed).
+3. Offer to install **FFmpeg** and **yt-dlp** for automatic video conversion and YouTube ingestion.
+4. Run `npm install` and initialize local SQLite database and media folders.
+5. Create a **"CinemaBooth Theater"** shortcut on your Windows Desktop.
+
+---
+
+## 2. Quick Start on Windows
+
+1. Double click **`CinemaBooth Theater`** on your Desktop (or run `.\start-theater.bat` in PowerShell).
 2. The system starts the local SQLite database and media server on port `3000`.
 3. It launches:
    - **Projector Screen**: `http://localhost:3000/?mode=screen` (move this window to your projector display and press **F11** for true fullscreen, or click anywhere to toggle fullscreen).

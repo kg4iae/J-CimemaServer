@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Settings, Upload, Image as ImageIcon, Check, Monitor, Database, Terminal, Shield } from 'lucide-react';
+import { Settings, Upload, Image as ImageIcon, Check, Monitor, Database, Terminal, Shield, Copy, DownloadCloud } from 'lucide-react';
 import { TheaterSettings, SystemStatus } from '../types/theater';
 import { saveSettings, uploadLogo } from '../services/api';
 
@@ -17,6 +17,7 @@ export default function SettingsTab({
   const [theaterName, setTheaterName] = useState(settings.theater_name || 'Grand Majestic Cinema');
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [copiedScript, setCopiedScript] = useState(false);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
 
@@ -188,6 +189,34 @@ export default function SettingsTab({
             <p className="text-slate-600 leading-relaxed font-medium">
               Press <code>Win + P</code> on Windows and select <strong>Extend</strong>. Move the Projector window to the projector screen and press <strong>F11</strong> for a seamless theatrical presentation.
             </p>
+          </div>
+        </div>
+
+        {/* 3. POWERSHELL DOWNLOAD & INSTALLATION FROM GITHUB */}
+        <div className="p-4 bg-slate-900 text-slate-100 rounded-xl space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold flex items-center gap-1.5 text-blue-400">
+              <DownloadCloud className="w-4 h-4 text-emerald-400" />
+              Automated PowerShell Installer (From Your GitHub)
+            </span>
+            <button
+              onClick={() => {
+                const cmd = `irm "https://raw.githubusercontent.com/<YOUR_USER>/<YOUR_REPO>/main/install-cinemabooth.ps1" | iex`;
+                navigator.clipboard.writeText(cmd);
+                setCopiedScript(true);
+                setTimeout(() => setCopiedScript(false), 2500);
+              }}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] flex items-center gap-1.5 transition-colors border border-slate-700"
+            >
+              {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+              <span>{copiedScript ? 'Copied Command!' : 'Copy Command'}</span>
+            </button>
+          </div>
+          <p className="text-slate-400 text-[11px] font-medium leading-relaxed">
+            Run this in Windows PowerShell on your media PC. It automatically clones the repository, installs Node.js, runs npm install, checks for FFmpeg/yt-dlp, and places a launcher shortcut on your Desktop.
+          </p>
+          <div className="p-2.5 bg-black/60 rounded-lg font-mono text-[11px] text-emerald-400 select-all overflow-x-auto border border-slate-800">
+            git clone &lt;YOUR_GITHUB_REPO_URL&gt; CinemaBooth ; cd CinemaBooth ; .\install-cinemabooth.ps1
           </div>
         </div>
 
