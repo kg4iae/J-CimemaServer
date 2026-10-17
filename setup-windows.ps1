@@ -7,7 +7,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host ""
 
 # 1. Check Node.js
-Write-Host "[1/4] Checking Node.js runtime..." -NoNewline
+Write-Host "[1/5] Checking Node.js runtime..." -NoNewline
 try {
     $nodeVersion = node -v
     Write-Host " OK ($nodeVersion)" -ForegroundColor Green
