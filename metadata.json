@@ -1,0 +1,6 @@
+{
+  "name": "CinemaBooth - Local Theater Media & Projector Automation Controller",
+  "description": "Full-featured theater media player and remote automation controller with zero-interface projector display, playlist manager, Home Assistant lighting cues, media ingestion & conversion pipeline, and Spotify walk-in music integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

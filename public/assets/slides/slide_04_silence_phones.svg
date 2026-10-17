@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="100%" height="100%">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#1e1828" />
+      <stop offset="60%" stop-color="#0e0a14" />
+      <stop offset="100%" stop-color="#050608" />
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fdf0cd" />
+      <stop offset="50%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#7e22ce" />
+    </linearGradient>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg)" />
+  <rect x="60" y="60" width="1800" height="960" fill="none" stroke="url(#gold)" stroke-width="2" opacity="0.3" />
+  <circle cx="960" cy="380" r="100" fill="#140d1f" stroke="url(#gold)" stroke-width="3" />
+  <text x="960" y="405" font-family="'Plus Jakarta Sans', sans-serif" font-size="64" text-anchor="middle">📴</text>
+  <text x="960" y="550" font-family="'Cinzel', 'Playfair Display', serif" font-size="54" font-weight="700" fill="url(#gold)" text-anchor="middle" letter-spacing="12">
+    AUDITORIUM COURTESY
+  </text>
+  <text x="960" y="620" font-family="'Plus Jakarta Sans', sans-serif" font-size="28" font-weight="600" fill="#f8fafc" text-anchor="middle" letter-spacing="4">
+    PLEASE SILENCE ALL PHONES &amp; MOBILE DEVICES
+  </text>
+  <text x="960" y="680" font-family="'Plus Jakarta Sans', sans-serif" font-size="18" fill="#94a3b8" text-anchor="middle" letter-spacing="6">
+    REFRAIN FROM TALKING OR TEXTING DURING THE PRESENTATION
+  </text>
+</svg>
