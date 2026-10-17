@@ -140,6 +140,9 @@ export default function SpotifyTab({
     setPreshowMode(mode);
     setSaving(true);
     try {
+      if (mode === 'spotify') {
+        preshowAudio.stop();
+      }
       const info = getModeDisplayInfo(mode);
       await saveSettings({
         spotify_client_id: clientId,
@@ -149,21 +152,27 @@ export default function SpotifyTab({
         preshow_music_mode: mode,
       });
 
-      // Update broadcast state
-      await controlSpotify(spotifyPlaying ? 'play' : 'pause', info.title, info.artist);
+      if (mode === 'spotify') {
+        const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
+        await controlSpotify('launch', info.title, info.artist, cleanUri);
+        try {
+          window.location.href = cleanUri;
+        } catch {}
+        setSavedMessage('Spotify Integration Active: Opening and playing playlist in Spotify');
+      } else {
+        await controlSpotify(spotifyPlaying ? 'play' : 'pause', info.title, info.artist);
+        preshowAudio.syncState({
+          isPlaylistPlaying: false,
+          spotifyPlaying,
+          volume: 1.0,
+          isMuted: false,
+          preshowMusicMode: mode,
+          customAudioUrl: settings.preshow_audio_url,
+        });
+        setSavedMessage(`Walk-in music switched to: ${info.title}`);
+      }
 
-      // Instantly sync local preview/audio engine
-      preshowAudio.syncState({
-        isPlaylistPlaying: false,
-        spotifyPlaying,
-        volume: 1.0,
-        isMuted: false,
-        preshowMusicMode: mode,
-        customAudioUrl: settings.preshow_audio_url,
-      });
-
-      setSavedMessage(`Walk-in music switched to: ${info.title}`);
-      setTimeout(() => setSavedMessage(null), 4000);
+      setTimeout(() => setSavedMessage(null), 5000);
       onRefreshSettings();
     } catch (e: any) {
       alert(`Error saving audio mode: ${e.message}`);
@@ -195,13 +204,33 @@ export default function SpotifyTab({
   const handleToggleSpotify = async () => {
     const nextAction = spotifyPlaying ? 'pause' : 'play';
     const info = getModeDisplayInfo(preshowMode);
-    await controlSpotify(nextAction, info.title, info.artist);
+    if (preshowMode === 'spotify') {
+      preshowAudio.stop();
+      const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
+      if (nextAction === 'play') {
+        await controlSpotify('launch', info.title, info.artist, cleanUri);
+        try {
+          window.location.href = cleanUri;
+        } catch {}
+      } else {
+        await controlSpotify('pause', info.title, info.artist);
+      }
+    } else {
+      await controlSpotify(nextAction, info.title, info.artist);
+    }
   };
 
   const handleLaunchSpotify = async () => {
     try {
-      await controlSpotify('launch');
-      window.open(getSpotifyWebUrl(playlistUri), '_blank');
+      preshowAudio.stop();
+      const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
+      await controlSpotify('launch', 'Spotify Walk-In Playlist', 'Spotify App', cleanUri);
+      try {
+        window.location.href = cleanUri;
+      } catch {}
+      setSavedMessage('Spotify Opened: Playing playlist in Spotify desktop app.');
+      setTimeout(() => setSavedMessage(null), 5000);
+      onRefreshSettings();
     } catch (err: any) {
       console.warn('Launch Spotify error:', err);
     }
@@ -367,7 +396,7 @@ export default function SpotifyTab({
         </div>
 
         {/* Sources Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           {/* 1: SPOTIFY INTEGRATION */}
           <button
             type="button"
@@ -392,95 +421,11 @@ export default function SpotifyTab({
               )}
             </div>
             <p className="text-slate-500 font-medium leading-relaxed">
-              Connect Spotify to stream curated movie playlists directly through the projector screen, with auto-pause during movies.
+              Opens and plays your playlist directly via your installed Spotify desktop app on this host machine, with auto-pause during movies.
             </p>
           </button>
 
-          {/* 2: RETRO THEATER INTERMISSION */}
-          <button
-            type="button"
-            onClick={() => handleSelectMode('retro')}
-            className={`p-4 rounded-2xl border text-left text-xs transition-all cursor-pointer relative overflow-hidden group ${
-              preshowMode === 'retro' || preshowMode === 'ambient'
-                ? 'bg-blue-50/90 border-blue-500 text-blue-950 shadow-md ring-2 ring-blue-500/30'
-                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center">
-                  <Disc className="w-4 h-4" />
-                </div>
-                <span>Retro Theater Intermission</span>
-              </div>
-              {(preshowMode === 'retro' || preshowMode === 'ambient') && (
-                <span className="px-2 py-0.5 bg-blue-600 text-white font-bold rounded-full text-[10px]">
-                  Active
-                </span>
-              )}
-            </div>
-            <p className="text-slate-500 font-medium leading-relaxed">
-              Authentic vintage 1950s/1970s drive-in & theater walk-in swing with vibraphone, warm chords, and cinema nostalgia.
-            </p>
-          </button>
-
-          {/* 3: GRAND HOLLYWOOD OVERTURE */}
-          <button
-            type="button"
-            onClick={() => handleSelectMode('overture')}
-            className={`p-4 rounded-2xl border text-left text-xs transition-all cursor-pointer relative overflow-hidden group ${
-              preshowMode === 'overture'
-                ? 'bg-amber-50/90 border-amber-500 text-amber-950 shadow-md ring-2 ring-amber-500/30'
-                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <span>Grand Hollywood Overture</span>
-              </div>
-              {preshowMode === 'overture' && (
-                <span className="px-2 py-0.5 bg-amber-600 text-white font-bold rounded-full text-[10px]">
-                  Active
-                </span>
-              )}
-            </div>
-            <p className="text-slate-500 font-medium leading-relaxed">
-              Majestic symphonic cinema overture with French horns, lush orchestral strings, and theater chimes.
-            </p>
-          </button>
-
-          {/* 4: CINEMA JAZZ LOUNGE */}
-          <button
-            type="button"
-            onClick={() => handleSelectMode('jazz')}
-            className={`p-4 rounded-2xl border text-left text-xs transition-all cursor-pointer relative overflow-hidden group ${
-              preshowMode === 'jazz'
-                ? 'bg-purple-50/90 border-purple-500 text-purple-950 shadow-md ring-2 ring-purple-500/30'
-                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-purple-600 text-white flex items-center justify-center">
-                  <Music className="w-4 h-4" />
-                </div>
-                <span>Cinema Jazz Lounge</span>
-              </div>
-              {preshowMode === 'jazz' && (
-                <span className="px-2 py-0.5 bg-purple-600 text-white font-bold rounded-full text-[10px]">
-                  Active
-                </span>
-              )}
-            </div>
-            <p className="text-slate-500 font-medium leading-relaxed">
-              Smooth, sophisticated film-noir and theater lounge jazz with warm piano, walking upright double bass, and gentle rhythm.
-            </p>
-          </button>
-
-          {/* 5: CUSTOM AUDIO UPLOAD */}
+          {/* 2: CUSTOM AUDIO UPLOAD */}
           <button
             type="button"
             onClick={() => handleSelectMode('custom_audio')}
@@ -504,11 +449,39 @@ export default function SpotifyTab({
               )}
             </div>
             <p className="text-slate-500 font-medium leading-relaxed">
-              Upload your own theater walk-in playlist, retro cinema jingle, or concession intermission audio track.
+              Upload your own preferred theater walk-in playlist, cinema jingle, or high-fidelity audio track.
             </p>
           </button>
 
-          {/* 6: SILENT / MUTE */}
+          {/* 3: RETRO THEATER INTERMISSION */}
+          <button
+            type="button"
+            onClick={() => handleSelectMode('retro')}
+            className={`p-4 rounded-2xl border text-left text-xs transition-all cursor-pointer relative overflow-hidden group ${
+              preshowMode === 'retro' || preshowMode === 'ambient'
+                ? 'bg-blue-50/90 border-blue-500 text-blue-950 shadow-md ring-2 ring-blue-500/30'
+                : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                  <Disc className="w-4 h-4" />
+                </div>
+                <span>Retro Intermission</span>
+              </div>
+              {(preshowMode === 'retro' || preshowMode === 'ambient') && (
+                <span className="px-2 py-0.5 bg-blue-600 text-white font-bold rounded-full text-[10px]">
+                  Active
+                </span>
+              )}
+            </div>
+            <p className="text-slate-500 font-medium leading-relaxed">
+              Vintage theater intermission chime melody with gentle vibraphone notes.
+            </p>
+          </button>
+
+          {/* 4: SILENT / MUTE */}
           <button
             type="button"
             onClick={() => handleSelectMode('none')}
@@ -537,30 +510,42 @@ export default function SpotifyTab({
           </button>
         </div>
 
-        {/* 3. SPOTIFY LIVE PLAYER EMBED & CONTROLLER (Shown when Spotify is selected) */}
+        {/* 3. SPOTIFY LIVE CONTROLLER & LAUNCHER (Shown when Spotify is selected) */}
         {preshowMode === 'spotify' && (
-          <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-2xl border border-slate-800 space-y-4 shadow-lg">
+          <div className="p-5 sm:p-6 bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-2xl border border-slate-800 space-y-4 shadow-lg">
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center text-black">
-                  <Music className="w-4 h-4" />
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-black shadow-md shadow-emerald-500/20">
+                  <Music className="w-4 h-4 fill-current" />
                 </div>
-                <h4 className="font-extrabold text-sm text-white">Spotify Pre-Show Web Player</h4>
+                <div>
+                  <h4 className="font-extrabold text-sm text-white">Spotify Desktop App Integration</h4>
+                  <p className="text-[11px] text-slate-400">Host PC Application & Surround Sound Output</p>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleLaunchSpotify}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title="Open in Spotify App or Web Browser"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Open Spotify</span>
-                </button>
+
+              {/* Primary Action Button: Open & Play in Spotify App */}
+              <button
+                type="button"
+                onClick={handleLaunchSpotify}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/25 active:scale-95 transition-all cursor-pointer"
+                title="Launch Spotify and start playback on host machine"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Open &amp; Play in Spotify App</span>
+                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-slate-800/60 rounded-xl border border-slate-700/60 text-xs text-slate-300 flex items-start gap-3">
+              <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-bold text-white">Installed Spotify Integration:</span>{' '}
+                CinemaBooth communicates directly with your installed Spotify desktop application. Clicking <strong>Open &amp; Play</strong> launches Spotify, navigates to your chosen playlist, and triggers playback so high-fidelity audio streams through your theater AV receiver. When a movie starts, playback automatically pauses.
               </div>
             </div>
 
-            {/* Live Spotify Iframe Embed */}
+            {/* Live Spotify Iframe Embed Preview */}
             <div className="rounded-xl overflow-hidden border border-emerald-500/30 bg-black shadow-inner">
               <iframe
                 src={getSpotifyEmbedUrl(playlistUri)}

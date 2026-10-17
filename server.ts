@@ -482,6 +482,17 @@ app.post('/api/settings', async (req: Request, res: Response) => {
     }
     saveDatabase();
     broadcast('SETTINGS_UPDATED', updates);
+
+    // If switching to Spotify mode, launch and play Spotify on Windows immediately
+    if (updates.preshow_music_mode === 'spotify') {
+      const uri = updates.spotify_playlist_uri || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I';
+      launchAndPlaySpotifyOnWindows(uri);
+      playbackState.spotifyPlaying = true;
+      playbackState.spotifyTrack = 'Spotify Pre-Show Playlist';
+      playbackState.spotifyArtist = 'Spotify Desktop App';
+      broadcast('SPOTIFY_STATE', { isPlaying: true, track: playbackState.spotifyTrack, artist: playbackState.spotifyArtist });
+    }
+
     res.json({ success: true, settings: updates });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -685,7 +696,8 @@ app.get('/api/media', async (req: Request, res: Response) => {
     let hasPruned = false;
 
     for (const item of media) {
-      const filePath = path.join(MEDIA_DIR, item.filename);
+      const cleanName = path.basename(item.filename || '');
+      const filePath = path.join(MEDIA_DIR, cleanName);
       if (fs.existsSync(filePath)) {
         validMedia.push(item);
       } else {
@@ -697,8 +709,11 @@ app.get('/api/media', async (req: Request, res: Response) => {
     }
 
     if (hasPruned) {
+      // Also clean up any orphan playlist items
+      db.run(`DELETE FROM playlist_items WHERE item_type = 'media' AND (media_id IS NULL OR media_id NOT IN (SELECT id FROM media_items))`);
       saveDatabase();
       broadcast('MEDIA_UPDATED', { pruned: true });
+      broadcast('PLAYLISTS_UPDATED', {});
     }
 
     res.json(validMedia);
@@ -776,19 +791,23 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
     if (existing[0]?.values) {
       for (const row of existing[0].values) {
         const id = row[0] as string;
-        const fn = row[1] as string;
+        const fn = (row[1] as string) || '';
         const dur = Number(row[2]) || 0;
         const res = (row[3] as string) || '';
         const size = Number(row[4]) || 0;
 
-        const filePath = path.join(MEDIA_DIR, fn);
+        const cleanName = path.basename(fn);
+        const filePath = path.join(MEDIA_DIR, cleanName);
         if (!fs.existsSync(filePath)) {
           // File was deleted from disk!
           db.run(`DELETE FROM media_items WHERE id = '${id}'`);
           db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
           prunedCount++;
         } else {
-          existingMap.set(fn, { id, duration: dur, resolution: res, file_size: size });
+          existingMap.set(cleanName, { id, duration: dur, resolution: res, file_size: size });
+          if (fn !== cleanName) {
+            existingMap.set(fn, { id, duration: dur, resolution: res, file_size: size });
+          }
         }
       }
     }
@@ -834,7 +853,8 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
           Math.abs(current.duration - meta.duration) > 0.5 ||
           current.resolution !== meta.resolution ||
           current.duration === 180 ||
-          current.duration === 120
+          current.duration === 120 ||
+          current.duration <= 0
         ) {
           db.run(`
             UPDATE media_items
@@ -856,8 +876,14 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
       }
     }
 
+    // Clean any orphaned playlist items
+    db.run(`DELETE FROM playlist_items WHERE item_type = 'media' AND (media_id IS NULL OR media_id NOT IN (SELECT id FROM media_items))`);
+
     saveDatabase();
     broadcast('MEDIA_UPDATED', { scannedCount, prunedCount, refreshedCount });
+    if (prunedCount > 0) {
+      broadcast('PLAYLISTS_UPDATED', {});
+    }
     res.json({
       success: true,
       newFilesCount: scannedCount,
@@ -884,8 +910,9 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
     if (existing[0]?.values) {
       for (const row of existing[0].values) {
         const id = row[0] as string;
-        const fn = row[1] as string;
-        const filePath = path.join(MEDIA_DIR, fn);
+        const fn = (row[1] as string) || '';
+        const cleanName = path.basename(fn);
+        const filePath = path.join(MEDIA_DIR, cleanName);
         if (!fs.existsSync(filePath)) {
           db.run(`DELETE FROM media_items WHERE id = '${id}'`);
           db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
@@ -945,11 +972,43 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
       }
     }
 
+    // Clean any orphaned playlist items
+    db.run(`DELETE FROM playlist_items WHERE item_type = 'media' AND (media_id IS NULL OR media_id NOT IN (SELECT id FROM media_items))`);
+
     saveDatabase();
     broadcast('MEDIA_UPDATED', { updatedCount, prunedCount });
+    if (prunedCount > 0) {
+      broadcast('PLAYLISTS_UPDATED', {});
+    }
     res.json({ success: true, updatedCount, prunedCount });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Update exact duration (e.g. synchronized from client hardware video tag probe)
+app.post('/api/media/:id/duration', async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  const { duration, resolution } = req.body;
+  if (typeof duration === 'number' && duration > 0) {
+    const db = await getDatabase();
+    const cleanDur = Math.round(duration * 100) / 100;
+    db.run(`
+      UPDATE media_items 
+      SET duration = ${cleanDur} ${resolution ? `, resolution = '${resolution}'` : ''} 
+      WHERE id = '${id}'
+    `);
+    db.run(`
+      UPDATE playlist_items 
+      SET duration = ${cleanDur} 
+      WHERE media_id = '${id}'
+    `);
+    saveDatabase();
+    broadcast('MEDIA_UPDATED', { id, duration: cleanDur });
+    broadcast('PLAYLISTS_UPDATED', {});
+    res.json({ success: true, duration: cleanDur });
+  } else {
+    res.status(400).json({ error: 'Valid duration number required' });
   }
 });
 
@@ -1516,21 +1575,49 @@ app.get('/api/spotify', async (req: Request, res: Response) => {
   });
 });
 
+// Helper to launch Spotify on Windows and initiate playback
+function launchAndPlaySpotifyOnWindows(uriOrPlaylist?: string) {
+  if (process.platform === 'win32') {
+    try {
+      const raw = (uriOrPlaylist || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I').trim();
+      const spotifyUri = raw.startsWith('spotify:') ? raw : `spotify:playlist:${raw}`;
+      const psScript = `
+        try {
+          Start-Process "${spotifyUri}"
+          Start-Sleep -Milliseconds 1200
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.AppActivate('Spotify')
+          Start-Sleep -Milliseconds 400
+          $wshell.SendKeys([char]179)
+        } catch {}
+      `;
+      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch (e) {
+      console.warn('Could not launch Spotify on Windows:', e);
+    }
+  }
+}
+
 app.post('/api/spotify/action', async (req: Request, res: Response) => {
-  const { action, track, artist } = req.body;
+  const { action, track, artist, uri } = req.body;
   const db = await getDatabase();
+  const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
+  const spotifyUri = (uri || uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I') as string;
 
   if (action === 'launch' || action === 'open') {
-    const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
-    const spotifyUri = uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I';
-    if (process.platform === 'win32') {
-      try {
-        spawn('cmd', ['/c', 'start', String(spotifyUri)]);
-      } catch (e) {
-        console.warn('Could not launch Spotify on Windows:', e);
-      }
-    }
-    res.json({ success: true, launched: spotifyUri });
+    playbackState.spotifyPlaying = true;
+    playbackState.spotifyTrack = track || 'Spotify Pre-Show Playlist';
+    playbackState.spotifyArtist = artist || 'Spotify Desktop App';
+    launchAndPlaySpotifyOnWindows(spotifyUri);
+    broadcast('SPOTIFY_STATE', {
+      isPlaying: true,
+      track: playbackState.spotifyTrack,
+      artist: playbackState.spotifyArtist,
+    });
+    res.json({ success: true, launched: spotifyUri, isPlaying: true });
     return;
   }
 
@@ -1538,24 +1625,30 @@ app.post('/api/spotify/action', async (req: Request, res: Response) => {
     playbackState.spotifyPlaying = true;
     if (track) playbackState.spotifyTrack = track;
     if (artist) playbackState.spotifyArtist = artist;
-    if (process.platform === 'win32') {
+    
+    const modeRes = db.exec("SELECT value FROM settings WHERE key = 'preshow_music_mode'");
+    const currentMode = modeRes[0]?.values[0]?.[0] || 'spotify';
+    if (currentMode === 'spotify') {
+      launchAndPlaySpotifyOnWindows(spotifyUri);
+    } else if (process.platform === 'win32') {
       try {
-        // Send Windows Media Play/Pause
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
       } catch {}
     }
   } else if (action === 'pause') {
     playbackState.spotifyPlaying = false;
     if (process.platform === 'win32') {
       try {
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
       } catch {}
     }
   } else if (action === 'toggle') {
     playbackState.spotifyPlaying = !playbackState.spotifyPlaying;
-    if (process.platform === 'win32') {
+    if (playbackState.spotifyPlaying) {
+      launchAndPlaySpotifyOnWindows(spotifyUri);
+    } else if (process.platform === 'win32') {
       try {
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
       } catch {}
     }
   }

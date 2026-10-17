@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, ArrowUp, ArrowDown, Play, Film, Zap, Clock, Check, Edit2 } from 'lucide-react';
+import { Plus, Trash2, ArrowUp, ArrowDown, Play, Film, Zap, Clock, Check, Edit2, GripVertical, ChevronsUp, ChevronsDown, CheckCircle2 } from 'lucide-react';
 import { Playlist, PlaylistItem, MediaItem, AutomationCue } from '../types/theater';
 
 interface PlaylistsTabProps {
@@ -38,6 +38,9 @@ export default function PlaylistsTab({
   const [titleInput, setTitleInput] = useState('');
   const [descInput, setDescInput] = useState('');
   const [showAddModal, setShowAddModal] = useState<'media' | 'cue' | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [reorderFeedback, setReorderFeedback] = useState<string | null>(null);
 
   const currentPlaylist = playlists.find((p) => p.id === selectedPlaylistId) || playlists[0];
 
@@ -50,25 +53,67 @@ export default function PlaylistsTab({
     });
   };
 
-  const handleMoveItem = async (index: number, direction: 'up' | 'down') => {
+  const handleReorder = async (fromIndex: number, toIndex: number) => {
     if (!currentPlaylist || !currentPlaylist.items) return;
+    if (fromIndex === toIndex || toIndex < 0 || toIndex >= currentPlaylist.items.length) return;
     const items = [...currentPlaylist.items];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= items.length) return;
-
-    const temp = items[index];
-    items[index] = items[targetIndex];
-    items[targetIndex] = temp;
+    const [moved] = items.splice(fromIndex, 1);
+    items.splice(toIndex, 0, moved);
 
     // re-index sort_order
     items.forEach((it, idx) => {
       it.sort_order = idx + 1;
     });
 
+    setReorderFeedback(`Repositioned "${moved.title}" to #${toIndex + 1}`);
+    setTimeout(() => setReorderFeedback(null), 3000);
+
     await onSavePlaylist({
       ...currentPlaylist,
       items,
     });
+  };
+
+  const handleMoveItem = async (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    await handleReorder(index, targetIndex);
+  };
+
+  const handleMoveToTop = async (index: number) => {
+    await handleReorder(index, 0);
+  };
+
+  const handleMoveToBottom = async (index: number) => {
+    if (!currentPlaylist?.items) return;
+    await handleReorder(index, currentPlaylist.items.length - 1);
+  };
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+    setDraggedIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverIndex !== index) {
+      setDragOverIndex(index);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedIndex !== null && draggedIndex !== targetIndex) {
+      await handleReorder(draggedIndex, targetIndex);
+    }
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
   };
 
   const handleRemoveItem = async (index: number) => {
@@ -278,87 +323,163 @@ export default function PlaylistsTab({
           {/* 3. ITEMS LIST & REORDERING */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-slate-500 px-1 uppercase tracking-wider">
-              <span>Program Sequence (Order of Execution)</span>
+              <span>Program Sequence (Drag or use arrows to reorder)</span>
               <span>Reorder / Actions</span>
             </div>
+
+            {/* Reorder feedback toast */}
+            {reorderFeedback && (
+              <div className="p-2.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 text-xs font-semibold flex items-center gap-2 animate-fadeIn shadow-2xs">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>{reorderFeedback}</span>
+              </div>
+            )}
 
             {(!currentPlaylist.items || currentPlaylist.items.length === 0) ? (
               <div className="p-8 text-center border border-dashed border-slate-300 rounded-xl text-slate-500 text-sm">
                 This playlist has no items yet. Add video clips from your media library or automation cues below.
               </div>
             ) : (
-              currentPlaylist.items.map((item, idx) => (
-                <div
-                  key={item.id || idx}
-                  className="flex items-center gap-3 p-3.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-900 hover:border-blue-300 hover:bg-white transition-colors shadow-2xs"
-                >
-                  {/* Sequence Number */}
-                  <span className="w-6 text-center font-mono text-xs text-slate-500 font-bold shrink-0">
-                    {idx + 1}
-                  </span>
+              currentPlaylist.items.map((item, idx) => {
+                const isDragging = draggedIndex === idx;
+                const isDragOver = dragOverIndex === idx && draggedIndex !== idx;
 
-                  {/* Type Icon */}
+                return (
                   <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                      item.item_type === 'cue'
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                        : 'bg-blue-100 text-blue-800 border border-blue-200'
+                    key={item.id || idx}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, idx)}
+                    onDragOver={(e) => handleDragOver(e, idx)}
+                    onDrop={(e) => handleDrop(e, idx)}
+                    onDragEnd={handleDragEnd}
+                    className={`flex items-center gap-2 sm:gap-3 p-3 sm:p-3.5 rounded-xl border text-slate-900 transition-all ${
+                      isDragging
+                        ? 'opacity-40 bg-blue-50 border-dashed border-blue-400 scale-[0.99]'
+                        : isDragOver
+                        ? 'border-blue-500 bg-blue-50/70 shadow-md ring-2 ring-blue-500/30'
+                        : 'bg-slate-50/90 border-slate-200 hover:border-blue-300 hover:bg-white shadow-2xs'
                     }`}
                   >
-                    {item.item_type === 'cue' ? <Zap className="w-4 h-4" /> : <Film className="w-4 h-4" />}
-                  </div>
-
-                  {/* Details */}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-bold truncate text-slate-900">
-                      {item.title}
+                    {/* Drag Handle */}
+                    <div
+                      className="text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing p-1 shrink-0"
+                      title="Drag to reorder event"
+                    >
+                      <GripVertical className="w-4 h-4" />
                     </div>
-                    <div className="text-xs text-slate-500 truncate mt-0.5">
-                      {item.item_type === 'cue' ? (
-                        <span className="text-emerald-700 font-semibold">
-                          Automation Trigger ({item.cue_service || 'Home Assistant'})
-                        </span>
-                      ) : (
-                        <span>
-                          Video File · {item.resolution || '1080p'} · {formatDuration(item.duration)}
-                        </span>
-                      )}
+
+                    {/* Sequence Number & Position Selector Dropdown */}
+                    <div className="relative shrink-0">
+                      <select
+                        value={idx + 1}
+                        onChange={(e) => {
+                          const newPos = parseInt(e.target.value, 10) - 1;
+                          handleReorder(idx, newPos);
+                        }}
+                        title={`Currently position #${idx + 1}. Click to jump to another position.`}
+                        className="w-8 h-7 text-center font-mono text-xs text-slate-700 font-bold bg-white border border-slate-300 rounded-lg cursor-pointer hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 appearance-none pl-1.5"
+                      >
+                        {currentPlaylist.items.map((_, pIdx) => (
+                          <option key={pIdx} value={pIdx + 1}>
+                            {pIdx + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Type Icon */}
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                        item.item_type === 'cue'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-blue-100 text-blue-800 border border-blue-200'
+                      }`}
+                    >
+                      {item.item_type === 'cue' ? <Zap className="w-4 h-4" /> : <Film className="w-4 h-4" />}
+                    </div>
+
+                    {/* Details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold truncate text-slate-900">
+                        {item.title}
+                      </div>
+                      <div className="text-xs text-slate-500 truncate mt-0.5">
+                        {item.item_type === 'cue' ? (
+                          <span className="text-emerald-700 font-semibold">
+                            Automation Trigger ({item.cue_service || 'Home Assistant'})
+                          </span>
+                        ) : (
+                          <span>
+                            Video File · {item.resolution || '1080p'} · {formatDuration(item.duration)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Duration Tag */}
+                    <div className="font-mono text-xs font-semibold tabular-nums text-slate-600 px-2 shrink-0 hidden sm:block">
+                      {item.item_type === 'cue' ? 'Instant' : formatDuration(item.duration)}
+                    </div>
+
+                    {/* Comprehensive Reorder Controls */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {/* Move to Top */}
+                      <button
+                        type="button"
+                        onClick={() => handleMoveToTop(idx)}
+                        disabled={idx === 0}
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs cursor-pointer"
+                        title="Move to top of playlist (First)"
+                      >
+                        <ChevronsUp className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Move Up */}
+                      <button
+                        type="button"
+                        onClick={() => handleMoveItem(idx, 'up')}
+                        disabled={idx === 0}
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs cursor-pointer"
+                        title="Move up one position"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Move Down */}
+                      <button
+                        type="button"
+                        onClick={() => handleMoveItem(idx, 'down')}
+                        disabled={idx === (currentPlaylist.items?.length || 0) - 1}
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs cursor-pointer"
+                        title="Move down one position"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Move to Bottom */}
+                      <button
+                        type="button"
+                        onClick={() => handleMoveToBottom(idx)}
+                        disabled={idx === (currentPlaylist.items?.length || 0) - 1}
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs cursor-pointer"
+                        title="Move to bottom of playlist (Last)"
+                      >
+                        <ChevronsDown className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Remove */}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(idx)}
+                        className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 transition-colors shadow-2xs cursor-pointer ml-1"
+                        title="Remove event from playlist"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
-
-                  {/* Duration Tag */}
-                  <div className="font-mono text-xs font-semibold tabular-nums text-slate-600 px-2 shrink-0">
-                    {item.item_type === 'cue' ? 'Instant' : formatDuration(item.duration)}
-                  </div>
-
-                  {/* Reorder Buttons */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => handleMoveItem(idx, 'up')}
-                      disabled={idx === 0}
-                      className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs"
-                      title="Move up"
-                    >
-                      <ArrowUp className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleMoveItem(idx, 'down')}
-                      disabled={idx === (currentPlaylist.items?.length || 0) - 1}
-                      className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs"
-                      title="Move down"
-                    >
-                      <ArrowDown className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleRemoveItem(idx)}
-                      className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 transition-colors shadow-2xs"
-                      title="Remove item"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 

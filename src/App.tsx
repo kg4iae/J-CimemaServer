@@ -515,6 +515,11 @@ export default function App() {
             onControl={handleControl}
             onSelectItem={handleSelectItem}
             onSelectSlideshow={handleSelectSlideshow}
+            onReorderPlaylist={async (items) => {
+              if (activePlaylist) {
+                await handleSavePlaylist({ ...activePlaylist, items });
+              }
+            }}
           />
         )}
 

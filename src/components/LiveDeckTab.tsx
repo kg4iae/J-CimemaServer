@@ -12,6 +12,8 @@ import {
   Clock,
   Film,
   Presentation,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { PlaybackState, Playlist, PlaylistItem, Slideshow } from '../types/theater';
 
@@ -24,6 +26,7 @@ interface LiveDeckTabProps {
   onControl: (action: string, value?: any) => void;
   onSelectItem: (index: number) => void;
   onSelectSlideshow?: (id: string) => void;
+  onReorderPlaylist?: (items: PlaylistItem[]) => Promise<void>;
 }
 
 function formatTime(seconds: number): string {
@@ -47,9 +50,24 @@ export default function LiveDeckTab({
   onControl,
   onSelectItem,
   onSelectSlideshow,
+  onReorderPlaylist,
 }: LiveDeckTabProps) {
   const items = activePlaylist?.items || [];
   const currentIndex = playback.currentItemIndex;
+
+  const handleMoveItem = async (e: React.MouseEvent, index: number, direction: 'up' | 'down') => {
+    e.stopPropagation();
+    if (!onReorderPlaylist || !activePlaylist || !activePlaylist.items) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= activePlaylist.items.length) return;
+    const newItems = [...activePlaylist.items];
+    const [moved] = newItems.splice(index, 1);
+    newItems.splice(targetIndex, 0, moved);
+    newItems.forEach((it, idx) => {
+      it.sort_order = idx + 1;
+    });
+    await onReorderPlaylist(newItems);
+  };
 
   // Selected slideshow
   const currentShowId = playback.activeSlideshowId || activeSlideshowId || slideshows[0]?.id || '';
@@ -399,6 +417,30 @@ export default function LiveDeckTab({
                   <div className="text-xs font-mono font-semibold tabular-nums text-slate-600 shrink-0">
                     {formatTime(it.duration)}
                   </div>
+
+                  {/* Quick Reorder on Live Deck */}
+                  {onReorderPlaylist && (
+                    <div className="flex items-center gap-0.5 shrink-0 pl-1">
+                      <button
+                        type="button"
+                        onClick={(e) => handleMoveItem(e, idx, 'up')}
+                        disabled={idx === 0}
+                        title="Move up in rundown"
+                        className="p-1 rounded-md bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 disabled:opacity-20 cursor-pointer shadow-2xs"
+                      >
+                        <ArrowUp className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleMoveItem(e, idx, 'down')}
+                        disabled={idx === items.length - 1}
+                        title="Move down in rundown"
+                        className="p-1 rounded-md bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 disabled:opacity-20 cursor-pointer shadow-2xs"
+                      >
+                        <ArrowDown className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

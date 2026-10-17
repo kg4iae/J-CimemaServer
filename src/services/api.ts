@@ -137,11 +137,29 @@ export async function fetchSpotifyState(): Promise<any> {
   return res.json();
 }
 
-export async function controlSpotify(action: 'play' | 'pause' | 'toggle' | 'launch', track?: string, artist?: string): Promise<any> {
+export async function controlSpotify(
+  action: 'play' | 'pause' | 'toggle' | 'launch',
+  track?: string,
+  artist?: string,
+  uri?: string
+): Promise<any> {
   const res = await fetch(`${API_BASE}/spotify/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, track, artist }),
+    body: JSON.stringify({ action, track, artist, uri }),
+  });
+  return res.json();
+}
+
+export async function updateMediaDuration(
+  id: string,
+  duration: number,
+  resolution?: string
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/media/${id}/duration`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ duration, resolution }),
   });
   return res.json();
 }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Upload,
   FolderSync,
@@ -21,6 +21,7 @@ import {
   ingestYouTubeVideo,
   deleteMedia,
   rescanAllMedia,
+  updateMediaDuration,
 } from '../services/api';
 
 interface MediaIngestTabProps {
@@ -72,6 +73,27 @@ export default function MediaIngestTab({
   const [isYtDownloading, setIsYtDownloading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Background hardware decode verification for any items with estimated/unverified runtimes
+  useEffect(() => {
+    mediaList.forEach((item) => {
+      if (item.file_path && (item.duration === 120 || item.duration === 180 || item.duration <= 0)) {
+        try {
+          const v = document.createElement('video');
+          v.preload = 'metadata';
+          v.src = item.file_path;
+          v.onloadedmetadata = () => {
+            if (v.duration && v.duration > 0 && Math.abs(v.duration - item.duration) > 0.5) {
+              const res = v.videoWidth && v.videoHeight ? `${v.videoWidth}x${v.videoHeight}` : undefined;
+              updateMediaDuration(item.id, v.duration, res).then(() => {
+                onRefresh();
+              }).catch(() => {});
+            }
+          };
+        } catch {}
+      }
+    });
+  }, [mediaList]);
 
   const handleScan = async () => {
     setIsScanning(true);

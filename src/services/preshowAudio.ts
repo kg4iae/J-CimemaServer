@@ -36,7 +36,7 @@ class PreshowAudioEngine {
   private isPlaying = false;
   private targetVolume = 0.8;
   private isMuted = false;
-  private currentMode: string = 'retro';
+  private currentMode: string = 'spotify';
   private customAudioUrl: string = '';
   private currentTrackUrl: string = '';
 
@@ -126,7 +126,7 @@ class PreshowAudioEngine {
   }) {
     this.targetVolume = typeof params.volume === 'number' ? params.volume : 0.8;
     this.isMuted = !!params.isMuted;
-    this.currentMode = params.preshowMusicMode || this.currentMode || 'retro';
+    this.currentMode = params.preshowMusicMode || this.currentMode || 'spotify';
     if (params.customAudioUrl) {
       this.customAudioUrl = params.customAudioUrl;
     }
@@ -186,14 +186,17 @@ class PreshowAudioEngine {
   }
 
   /**
-   * Smoothly fade out and pause audio
+   * Smoothly fade out, pause, and completely reset audio element
    */
   public stop() {
     this.isPlaying = false;
+    this.currentTrackUrl = '';
     if (!this.audio) return;
 
     try {
       this.audio.pause();
+      this.audio.currentTime = 0;
+      this.audio.src = '';
     } catch {}
   }
 

@@ -11,12 +11,40 @@ export interface MediaMetadata {
 }
 
 /**
+ * Locate executable path on system (handles Windows installation paths)
+ */
+function findExecutable(binName: string): string {
+  const isWin = process.platform === 'win32';
+  const name = isWin && !binName.toLowerCase().endsWith('.exe') ? `${binName}.exe` : binName;
+
+  if (isWin) {
+    const candidates = [
+      name,
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ffmpeg', 'bin', name),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'ffmpeg', 'bin', name),
+      'C:\\ffmpeg\\bin\\' + name,
+      path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', name),
+      'C:\\ProgramData\\chocolatey\\bin\\' + name,
+    ];
+    for (const cand of candidates) {
+      try {
+        if (cand === name || fs.existsSync(cand)) {
+          return cand;
+        }
+      } catch {}
+    }
+  }
+  return name;
+}
+
+/**
  * Probe media file using ffprobe
  */
 function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolution: string } | null> {
   return new Promise((resolve) => {
     try {
-      const proc = spawn('ffprobe', [
+      const ffprobeBin = findExecutable('ffprobe');
+      const proc = spawn(ffprobeBin, [
         '-v', 'error',
         '-show_entries', 'format=duration:stream=width,height',
         '-of', 'json',
@@ -31,7 +59,7 @@ function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolut
       const timer = setTimeout(() => {
         proc.kill();
         resolve(null);
-      }, 5000);
+      }, 7000);
 
       proc.on('close', (code) => {
         clearTimeout(timer);
@@ -51,8 +79,10 @@ function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolut
               }
             }
 
-            resolve({ duration, resolution });
-            return;
+            if (duration > 0) {
+              resolve({ duration: Math.round(duration * 100) / 100, resolution });
+              return;
+            }
           } catch {}
         }
         resolve(null);
@@ -74,7 +104,8 @@ function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolut
 function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resolution: string } | null> {
   return new Promise((resolve) => {
     try {
-      const proc = spawn('ffmpeg', ['-i', filePath]);
+      const ffmpegBin = findExecutable('ffmpeg');
+      const proc = spawn(ffmpegBin, ['-i', filePath]);
       let stderr = '';
       proc.stderr.on('data', (d) => {
         stderr += d.toString();
@@ -83,7 +114,7 @@ function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resoluti
       const timer = setTimeout(() => {
         proc.kill();
         resolve(null);
-      }, 5000);
+      }, 7000);
 
       proc.on('close', () => {
         clearTimeout(timer);
@@ -106,7 +137,7 @@ function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resoluti
         }
 
         if (duration > 0) {
-          resolve({ duration, resolution });
+          resolve({ duration: Math.round(duration * 100) / 100, resolution });
         } else {
           resolve(null);
         }
@@ -124,33 +155,90 @@ function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resoluti
 
 /**
  * Pure binary parser for MP4/MOV container atoms ('mvhd' box)
- * Used as high-speed pure-JS fallback if FFmpeg/FFprobe are not installed.
+ * Scans BOTH the beginning (first 2MB) AND the tail (last 8MB) where the 'moov' atom
+ * is written by encoders when -movflags +faststart was not used.
  */
 function probeMp4Binary(filePath: string): { duration: number; resolution: string } | null {
   try {
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    if (fileSize < 64) return null;
+
     const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(1024 * 1024); // read first 1MB
-    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+
+    const parseMvhd = (buf: Buffer): number => {
+      const idx = buf.indexOf('mvhd');
+      if (idx !== -1 && idx + 24 < buf.length) {
+        const version = buf.readUInt8(idx + 4);
+        let timescale = 0;
+        let durationUnits = 0;
+        if (version === 0) {
+          timescale = buf.readUInt32BE(idx + 16);
+          durationUnits = buf.readUInt32BE(idx + 20);
+        } else if (version === 1 && idx + 36 < buf.length) {
+          timescale = buf.readUInt32BE(idx + 24);
+          durationUnits = Number(buf.readBigUInt64BE(idx + 28));
+        }
+        if (timescale > 0 && durationUnits > 0) {
+          return Math.round((durationUnits / timescale) * 100) / 100;
+        }
+      }
+      return 0;
+    };
+
+    // 1. Check head (first 2MB)
+    const headSize = Math.min(fileSize, 2 * 1024 * 1024);
+    const headBuf = Buffer.alloc(headSize);
+    fs.readSync(fd, headBuf, 0, headSize, 0);
+    let dur = parseMvhd(headBuf);
+
+    // 2. If not in head, check tail (last 8MB) where moov is placed
+    if (dur <= 0 && fileSize > headSize) {
+      const tailSize = Math.min(fileSize, 8 * 1024 * 1024);
+      const tailBuf = Buffer.alloc(tailSize);
+      fs.readSync(fd, tailBuf, 0, tailSize, fileSize - tailSize);
+      dur = parseMvhd(tailBuf);
+    }
+
     fs.closeSync(fd);
 
-    // Search for 'mvhd' box
-    const mvhdIdx = buffer.indexOf('mvhd');
-    if (mvhdIdx !== -1 && mvhdIdx + 24 < bytesRead) {
-      const version = buffer.readUInt8(mvhdIdx + 4);
-      let timescale = 0;
-      let durationUnits = 0;
+    if (dur > 0) {
+      return { duration: dur, resolution: '1920x1080' };
+    }
+  } catch {}
+  return null;
+}
 
-      if (version === 0) {
-        timescale = buffer.readUInt32BE(mvhdIdx + 16);
-        durationUnits = buffer.readUInt32BE(mvhdIdx + 20);
-      } else if (version === 1 && mvhdIdx + 36 < bytesRead) {
-        timescale = buffer.readUInt32BE(mvhdIdx + 24);
-        durationUnits = Number(buffer.readBigUInt64BE(mvhdIdx + 28));
-      }
+/**
+ * Pure binary parser for Matroska / WebM files
+ * Reads Matroska Segment Info Duration tag
+ */
+function probeMatroskaBinary(filePath: string): { duration: number; resolution: string } | null {
+  try {
+    const stat = fs.statSync(filePath);
+    const fd = fs.openSync(filePath, 'r');
+    const readSize = Math.min(stat.size, 2 * 1024 * 1024);
+    const buf = Buffer.alloc(readSize);
+    fs.readSync(fd, buf, 0, readSize, 0);
+    fs.closeSync(fd);
 
-      if (timescale > 0 && durationUnits > 0) {
-        const duration = Math.round((durationUnits / timescale) * 100) / 100;
-        return { duration, resolution: '1920x1080' };
+    // Look for Matroska Duration tag (0x44 0x89)
+    for (let i = 0; i < buf.length - 10; i++) {
+      if (buf[i] === 0x44 && buf[i + 1] === 0x89) {
+        const floatSize = buf[i + 2];
+        if (floatSize === 4) {
+          const val = buf.readFloatBE(i + 3);
+          if (val > 0 && val < 86400 * 1000) {
+            const sec = val > 1000 ? val / 1000 : val;
+            return { duration: Math.round(sec * 100) / 100, resolution: '1920x1080' };
+          }
+        } else if (floatSize === 8) {
+          const val = buf.readDoubleBE(i + 3);
+          if (val > 0 && val < 86400 * 1000) {
+            const sec = val > 1000 ? val / 1000 : val;
+            return { duration: Math.round(sec * 100) / 100, resolution: '1920x1080' };
+          }
+        }
       }
     }
   } catch {}
@@ -179,12 +267,24 @@ export async function extractMediaMetadata(filePath: string): Promise<MediaMetad
     probe = await probeWithFfmpeg(filePath);
   }
 
-  // 3. Fallback to pure MP4 binary parser
-  if ((!probe || probe.duration <= 0) && (cleanFormat === 'mp4' || cleanFormat === 'm4v' || cleanFormat === 'mov')) {
+  // 3. Fallback to pure MP4 binary parser (scans head and tail)
+  if ((!probe || probe.duration <= 0) && ['mp4', 'm4v', 'mov'].includes(cleanFormat)) {
     probe = probeMp4Binary(filePath);
   }
 
-  const duration = probe && probe.duration > 0 ? Math.round(probe.duration * 10) / 10 : 120.0;
+  // 4. Fallback to pure Matroska / WebM binary parser
+  if ((!probe || probe.duration <= 0) && ['mkv', 'webm'].includes(cleanFormat)) {
+    probe = probeMatroskaBinary(filePath);
+  }
+
+  // 5. Intelligent duration resolution:
+  // If still not determined, estimate from file size assuming typical 8 Mbps video bitrate
+  let duration = probe && probe.duration > 0 ? probe.duration : 0;
+  if (duration <= 0 && fileSize > 0) {
+    const estimatedSeconds = Math.round(fileSize / (1024 * 1024)); // ~1MB/s rough estimate
+    duration = Math.max(10, Math.min(estimatedSeconds, 7200));
+  }
+
   const resolution = probe?.resolution || '1920x1080';
 
   return {
