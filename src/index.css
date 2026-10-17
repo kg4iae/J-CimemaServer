@@ -1,1 +1,83 @@
 @import "tailwindcss";
+
+/* Bright, interesting background patterns: Blue, White, Gray, Green */
+
+/* Pattern 1: Projector Beam & Cinema Optics (Default) */
+.theme-pattern-projector {
+  background-color: #f8fafc;
+  background-image:
+    /* Subtle projector light beam cone radiating from top center */
+    radial-gradient(ellipse 90% 45% at 50% 0%, rgba(37, 99, 235, 0.08) 0%, rgba(16, 185, 129, 0.05) 50%, transparent 100%),
+    /* Micro film perforation grid in cool gray/blue */
+    radial-gradient(circle at 12px 12px, rgba(37, 99, 235, 0.12) 1.5px, transparent 1.5px),
+    radial-gradient(circle at 36px 36px, rgba(16, 185, 129, 0.12) 1.5px, transparent 1.5px);
+  background-size: 100% 100%, 48px 48px, 48px 48px;
+  background-attachment: fixed;
+}
+
+/* Pattern 2: High-Tech Booth Blueprint (Architectural grid) */
+.theme-pattern-blueprint {
+  background-color: #f0f7ff;
+  background-image:
+    linear-gradient(to right, rgba(37, 99, 235, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(37, 99, 235, 0.08) 1px, transparent 1px),
+    radial-gradient(ellipse 80% 50% at 85% 10%, rgba(16, 185, 129, 0.08) 0%, transparent 70%);
+  background-size: 24px 24px, 24px 24px, 100% 100%;
+  background-attachment: fixed;
+}
+
+/* Pattern 3: Cinema Modern Waves (Acoustic & Light Dynamics) */
+.theme-pattern-waves {
+  background-color: #fcfdfd;
+  background-image:
+    radial-gradient(ellipse 70% 40% at 20% 0%, rgba(16, 185, 129, 0.09) 0%, transparent 70%),
+    radial-gradient(ellipse 80% 50% at 80% 100%, rgba(37, 99, 235, 0.09) 0%, transparent 70%),
+    repeating-linear-gradient(45deg, rgba(148, 163, 184, 0.04) 0px, rgba(148, 163, 184, 0.04) 2px, transparent 2px, transparent 16px);
+  background-attachment: fixed;
+}
+
+/* Pattern 4: Geometric Cinema Hex / Diamond */
+.theme-pattern-geometric {
+  background-color: #f8fafc;
+  background-image:
+    radial-gradient(ellipse 90% 40% at 50% 0%, rgba(37, 99, 235, 0.07) 0%, transparent 80%),
+    linear-gradient(30deg, rgba(148, 163, 184, 0.07) 12%, transparent 12.5%, transparent 87%, rgba(148, 163, 184, 0.07) 87.5%, rgba(148, 163, 184, 0.07)),
+    linear-gradient(150deg, rgba(148, 163, 184, 0.07) 12%, transparent 12.5%, transparent 87%, rgba(148, 163, 184, 0.07) 87.5%, rgba(148, 163, 184, 0.07)),
+    linear-gradient(60deg, rgba(16, 185, 129, 0.06) 25%, transparent 25.5%, transparent 75%, rgba(16, 185, 129, 0.06) 75%, rgba(16, 185, 129, 0.06));
+  background-size: 100% 100%, 40px 70px, 40px 70px, 40px 70px;
+  background-attachment: fixed;
+}
+
+/* Bright Glass & Elevation Utilities */
+.cinema-card-bright {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 2px 6px -1px rgba(15, 23, 42, 0.03);
+}
+
+.cinema-card-bright:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+  box-shadow: 0 8px 30px -4px rgba(37, 99, 235, 0.08), 0 4px 10px -2px rgba(15, 23, 42, 0.04);
+}
+
+/* Subtle striped cinema reel header accent */
+.cinema-stripe-accent {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(37, 99, 235, 0.08),
+    rgba(37, 99, 235, 0.08) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+}
+
+.emerald-stripe-accent {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(16, 185, 129, 0.08),
+    rgba(16, 185, 129, 0.08) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+}

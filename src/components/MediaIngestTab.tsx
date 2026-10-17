@@ -131,14 +131,14 @@ export default function MediaIngestTab({
   return (
     <div className="space-y-6">
       {/* 1. TOP CONTROLS & LOCAL SCANNER */}
-      <div className="bg-[#141824] border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-              <HardDrive className="w-5 h-5 text-amber-400" />
+            <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-blue-600" />
               Local Media Storage &amp; Ingestion Pipeline
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 mt-1 font-medium">
               Store video files directly on your Windows media PC. Files are scanned, format-verified, and converted with FFmpeg for stutter-free projection.
             </p>
           </div>
@@ -148,9 +148,9 @@ export default function MediaIngestTab({
             <button
               onClick={handleScan}
               disabled={isScanning}
-              className="min-h-[44px] px-4 py-2 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all disabled:opacity-50"
+              className="min-h-[44px] px-4 py-2 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-2xs"
             >
-              <FolderSync className={`w-4 h-4 text-amber-400 ${isScanning ? 'animate-spin' : ''}`} />
+              <FolderSync className={`w-4 h-4 text-blue-600 ${isScanning ? 'animate-spin' : ''}`} />
               <span>{isScanning ? 'Scanning Directory...' : 'Scan Local Media Folder'}</span>
             </button>
 
@@ -165,7 +165,7 @@ export default function MediaIngestTab({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className="min-h-[44px] px-4 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-amber-500/10 transition-all disabled:opacity-50"
+              className="min-h-[44px] px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm shadow-blue-600/20 transition-all disabled:opacity-50"
             >
               <Upload className="w-4 h-4" />
               <span>{isUploading ? 'Ingesting Video...' : 'Ingest Local File'}</span>
@@ -174,43 +174,51 @@ export default function MediaIngestTab({
         </div>
 
         {/* System Capabilities Banner */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-xs">
-          <div className="flex items-center gap-2 text-slate-300">
-            <span className="font-semibold text-white">FFmpeg Engine:</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+          <div className="flex items-center gap-2 text-slate-700">
+            <span className="font-bold text-slate-900">FFmpeg Engine:</span>
             {ffmpegAvailable ? (
-              <span className="text-emerald-400 font-medium">Installed &amp; Active</span>
+              <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Installed &amp; Active
+              </span>
             ) : (
-              <span className="text-amber-400 font-medium">In-app fallback active</span>
+              <span className="text-amber-800 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                In-app fallback active
+              </span>
             )}
           </div>
-          <div className="flex items-center gap-2 text-slate-300">
-            <span className="font-semibold text-white">yt-dlp YouTube Ingest:</span>
+          <div className="flex items-center gap-2 text-slate-700">
+            <span className="font-bold text-slate-900">yt-dlp YouTube Ingest:</span>
             {ytdlpAvailable ? (
-              <span className="text-emerald-400 font-medium">Installed &amp; Ready</span>
+              <span className="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Installed &amp; Ready
+              </span>
             ) : (
-              <span className="text-amber-400 font-medium">Auto-fallback active</span>
+              <span className="text-amber-800 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                Auto-fallback active
+              </span>
             )}
           </div>
         </div>
 
         {/* Status Message / Notification */}
         {statusMessage && (
-          <div className="p-3 bg-blue-950/40 border border-blue-800/40 rounded-xl text-xs text-blue-200 flex items-center gap-2">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0 text-blue-400" />
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 font-medium flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0 text-blue-600" />
             <span>{statusMessage}</span>
           </div>
         )}
 
         {/* Upload progress bar */}
         {uploadProgress !== null && (
-          <div className="space-y-1.5 p-3 bg-slate-900 rounded-xl border border-slate-800">
-            <div className="flex justify-between text-xs text-slate-300">
+          <div className="space-y-1.5 p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <div className="flex justify-between text-xs text-slate-700 font-medium">
               <span>Transferring media file to local theater drive...</span>
-              <span className="font-mono">{uploadProgress}%</span>
+              <span className="font-mono font-bold">{uploadProgress}%</span>
             </div>
-            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
               <div
-                className="h-full bg-amber-500 transition-all duration-300"
+                className="h-full bg-blue-600 transition-all duration-300"
                 style={{ width: `${uploadProgress}%` }}
               />
             </div>
@@ -219,27 +227,27 @@ export default function MediaIngestTab({
       </div>
 
       {/* 2. YT-DLP YOUTUBE CONTENT INGESTION CARD */}
-      <div className="bg-[#141824] border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200">
           <div className="flex items-center gap-2">
-            <Youtube className="w-5 h-5 text-red-500" />
-            <h3 className="text-base font-semibold text-white">
+            <Youtube className="w-5 h-5 text-red-600" />
+            <h3 className="text-base font-bold text-slate-900">
               Ingest YouTube Content (via yt-dlp)
             </h3>
           </div>
-          <span className="text-xs text-slate-400 flex items-center gap-1">
-            <Terminal className="w-3.5 h-3.5 text-amber-400" /> yt-dlp Engine
+          <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+            <Terminal className="w-3.5 h-3.5 text-blue-600" /> yt-dlp Engine
           </span>
         </div>
 
-        <p className="text-xs text-slate-400 leading-relaxed">
+        <p className="text-xs text-slate-500 font-medium leading-relaxed">
           Paste any YouTube trailer, teaser, countdown bumper, or short film URL. <code>yt-dlp</code> downloads the highest quality stream, muxes it to clean MP4, and indexes it into your local media database.
         </p>
 
         <form onSubmit={handleYtDlpIngest} className="space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2">
-              <label htmlFor="yt-url" className="block text-xs font-medium text-slate-300 mb-1">
+              <label htmlFor="yt-url" className="block text-xs font-semibold text-slate-700 mb-1">
                 YouTube Video URL
               </label>
               <input
@@ -249,12 +257,12 @@ export default function MediaIngestTab({
                 value={ytUrl}
                 onChange={(e) => setYtUrl(e.target.value)}
                 placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-600 font-mono shadow-2xs"
               />
             </div>
 
             <div>
-              <label htmlFor="yt-title" className="block text-xs font-medium text-slate-300 mb-1">
+              <label htmlFor="yt-title" className="block text-xs font-semibold text-slate-700 mb-1">
                 Custom Title (Optional)
               </label>
               <input
@@ -263,7 +271,7 @@ export default function MediaIngestTab({
                 value={ytTitle}
                 onChange={(e) => setYtTitle(e.target.value)}
                 placeholder="e.g. 2026 Film Festival Trailer"
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:border-blue-600 shadow-2xs"
               />
             </div>
           </div>
@@ -271,7 +279,7 @@ export default function MediaIngestTab({
           <button
             type="submit"
             disabled={isYtDownloading || !ytUrl.trim()}
-            className="min-h-[44px] px-5 py-2.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-md shadow-red-600/20 transition-all disabled:opacity-40"
+            className="min-h-[44px] px-5 py-2.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-red-600/20 transition-all disabled:opacity-40"
           >
             <Download className={`w-4 h-4 ${isYtDownloading ? 'animate-bounce' : ''}`} />
             <span>{isYtDownloading ? 'Executing yt-dlp...' : 'Download & Ingest via yt-dlp'}</span>
@@ -280,20 +288,20 @@ export default function MediaIngestTab({
       </div>
 
       {/* 3. MEDIA ITEMS LIST */}
-      <div className="bg-[#141824] border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-          <h3 className="text-base font-semibold text-white">
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+          <h3 className="text-base font-bold text-slate-900">
             Media Library ({mediaList.length} items)
           </h3>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-500 font-medium">
             Stored locally on host PC
           </span>
         </div>
 
         {mediaList.length === 0 ? (
-          <div className="p-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl space-y-2">
-            <Film className="w-8 h-8 mx-auto text-slate-600" />
-            <p className="text-sm font-medium text-slate-400">No media files registered yet</p>
+          <div className="p-12 text-center text-slate-500 border border-dashed border-slate-300 rounded-xl space-y-2">
+            <Film className="w-8 h-8 mx-auto text-slate-400" />
+            <p className="text-sm font-bold text-slate-700">No media files registered yet</p>
             <p className="text-xs text-slate-500">
               Click &quot;Scan Local Media Folder&quot; to discover files in <code>./media</code> or paste a YouTube URL above.
             </p>
@@ -307,23 +315,23 @@ export default function MediaIngestTab({
               return (
                 <div
                   key={item.id}
-                  className="p-4 bg-slate-900/80 border border-slate-800 rounded-xl space-y-3 hover:border-slate-700 transition-colors"
+                  className="p-4 bg-slate-50/90 border border-slate-200 rounded-xl space-y-3 hover:border-blue-300 transition-colors shadow-2xs"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-amber-400 shrink-0">
+                      <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-blue-600 shrink-0 shadow-2xs">
                         {item.original_name?.includes('youtube') || item.title?.startsWith('YouTube') ? (
-                          <Youtube className="w-5 h-5 text-red-500" />
+                          <Youtube className="w-5 h-5 text-red-600" />
                         ) : (
                           <Film className="w-5 h-5" />
                         )}
                       </div>
                       <div>
-                        <h4 className="text-sm font-semibold text-white tracking-tight">
+                        <h4 className="text-sm font-bold text-slate-900 tracking-tight">
                           {item.title}
                         </h4>
-                        <div className="text-xs text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
-                          <span className="font-mono text-slate-300 uppercase">{item.format}</span>
+                        <div className="text-xs text-slate-500 font-medium flex flex-wrap items-center gap-2 mt-0.5">
+                          <span className="font-mono text-blue-700 font-bold uppercase">{item.format}</span>
                           <span>·</span>
                           <span>{item.resolution}</span>
                           <span>·</span>
@@ -337,8 +345,8 @@ export default function MediaIngestTab({
                     <div className="flex items-center gap-2">
                       {/* Compatibility / Conversion Status */}
                       {item.conversion_status === 'ready' && (
-                        <span className="text-xs text-emerald-400 flex items-center gap-1 font-medium bg-emerald-950/40 border border-emerald-800/40 px-2.5 py-1 rounded-lg">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span className="text-xs text-emerald-800 flex items-center gap-1 font-bold bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                           <span>Projector Ready</span>
                         </span>
                       )}
@@ -347,7 +355,7 @@ export default function MediaIngestTab({
                         <button
                           onClick={() => handleConvert(item.id)}
                           disabled={isConverting}
-                          className="min-h-[36px] px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-sm transition-all"
+                          className="min-h-[36px] px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-2xs transition-all"
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${isConverting ? 'animate-spin' : ''}`} />
                           <span>{isConverting ? 'Processing...' : 'Convert with FFmpeg'}</span>
@@ -357,7 +365,7 @@ export default function MediaIngestTab({
                       {/* Preview button */}
                       <button
                         onClick={() => setPreviewItem(item)}
-                        className="min-h-[36px] min-w-[36px] p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg flex items-center justify-center transition-colors"
+                        className="min-h-[36px] min-w-[36px] p-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center transition-colors shadow-2xs"
                         title="Preview video"
                       >
                         <Eye className="w-4 h-4" />
@@ -368,16 +376,16 @@ export default function MediaIngestTab({
                   {/* Transcode / yt-dlp Progress Bar */}
                   {isConverting && (
                     <div className="space-y-1.5 pt-1">
-                      <div className="flex justify-between text-xs text-amber-300">
+                      <div className="flex justify-between text-xs text-blue-900 font-semibold">
                         <span className="flex items-center gap-1.5">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
                           Ingesting &amp; converting stream ({item.conversion_progress || 45}%)...
                         </span>
                         <span className="font-mono">{item.conversion_progress || 45}%</span>
                       </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-amber-500 transition-all duration-300"
+                          className="h-full bg-blue-600 transition-all duration-300"
                           style={{ width: `${item.conversion_progress || 45}%` }}
                         />
                       </div>
@@ -392,15 +400,15 @@ export default function MediaIngestTab({
 
       {/* 4. PREVIEW MODAL */}
       {previewItem && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#141824] border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-white truncate">
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+              <h3 className="text-base font-bold text-slate-900 truncate">
                 Preview: {previewItem.title}
               </h3>
               <button
                 onClick={() => setPreviewItem(null)}
-                className="text-slate-400 hover:text-white text-xs px-2 py-1 bg-slate-800 rounded-lg"
+                className="text-slate-600 hover:text-slate-900 text-xs font-semibold px-2.5 py-1 bg-slate-100 rounded-lg hover:bg-slate-200"
               >
                 Close Preview
               </button>
@@ -418,7 +426,7 @@ export default function MediaIngestTab({
               />
             </div>
 
-            <div className="text-xs text-slate-400 flex justify-between">
+            <div className="text-xs text-slate-500 font-medium flex justify-between">
               <span>File: {previewItem.filename}</span>
               <span>Resolution: {previewItem.resolution}</span>
             </div>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, ArrowUp, ArrowDown, Play, Film, Zap, Clock, Check, Edit2, ListPlus } from 'lucide-react';
+import { Plus, Trash2, ArrowUp, ArrowDown, Play, Film, Zap, Clock, Check, Edit2 } from 'lucide-react';
 import { Playlist, PlaylistItem, MediaItem, AutomationCue } from '../types/theater';
 
 interface PlaylistsTabProps {
@@ -141,7 +141,7 @@ export default function PlaylistsTab({
   return (
     <div className="space-y-6">
       {/* 1. PLAYLIST SELECTOR BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#141824] border border-slate-800 rounded-2xl">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white border border-slate-200/90 rounded-2xl shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           {playlists.map((pl) => {
             const isSelected = pl.id === currentPlaylist?.id;
@@ -150,15 +150,15 @@ export default function PlaylistsTab({
               <button
                 key={pl.id}
                 onClick={() => setSelectedPlaylistId(pl.id)}
-                className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-2 ${
+                className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
                   isSelected
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/10'
-                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
                 <span>{pl.title}</span>
                 {isDeckActive && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${isSelected ? 'bg-slate-950/20 text-slate-900' : 'bg-emerald-950 text-emerald-400'}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                     Live
                   </span>
                 )}
@@ -169,17 +169,17 @@ export default function PlaylistsTab({
 
         <button
           onClick={handleCreateNewPlaylist}
-          className="min-h-[44px] px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors shrink-0"
+          className="min-h-[44px] px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 shadow-sm shadow-blue-500/20"
         >
-          <Plus className="w-4 h-4 text-amber-400" />
+          <Plus className="w-4 h-4 text-emerald-300" />
           <span>New Playlist</span>
         </button>
       </div>
 
       {currentPlaylist && (
-        <div className="bg-[#141824] border border-slate-800 rounded-2xl p-6 space-y-6">
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-6 shadow-sm">
           {/* 2. PLAYLIST HEADER & EDIT */}
-          <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-slate-800">
+          <div className="flex flex-wrap items-start justify-between gap-4 pb-5 border-b border-slate-200">
             <div className="flex-1 min-w-[280px]">
               {editingTitle ? (
                 <div className="space-y-3">
@@ -188,25 +188,25 @@ export default function PlaylistsTab({
                     value={titleInput}
                     onChange={(e) => setTitleInput(e.target.value)}
                     placeholder="Playlist Title"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-semibold text-lg focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 font-bold text-lg focus:outline-none focus:border-blue-600"
                   />
                   <input
                     type="text"
                     value={descInput}
                     onChange={(e) => setDescInput(e.target.value)}
                     placeholder="Brief description or program notes"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-300 text-xs focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-slate-700 text-xs focus:outline-none focus:border-blue-600"
                   />
                   <div className="flex gap-2">
                     <button
                       onClick={handleSaveDetails}
-                      className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5"
+                      className="px-3.5 py-1.5 bg-blue-600 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-2xs"
                     >
                       <Check className="w-3.5 h-3.5" /> Save
                     </button>
                     <button
                       onClick={() => setEditingTitle(false)}
-                      className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg"
+                      className="px-3.5 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300"
                     >
                       Cancel
                     </button>
@@ -215,7 +215,7 @@ export default function PlaylistsTab({
               ) : (
                 <div>
                   <div className="flex items-center gap-3">
-                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
                       {currentPlaylist.title}
                     </h2>
                     <button
@@ -224,18 +224,18 @@ export default function PlaylistsTab({
                         setDescInput(currentPlaylist.description || '');
                         setEditingTitle(true);
                       }}
-                      className="text-slate-400 hover:text-white p-1"
+                      className="text-slate-400 hover:text-blue-600 p-1"
                       title="Edit playlist title"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1 font-medium">
                     {currentPlaylist.description || 'No description provided'}
                   </p>
-                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-400 font-mono tabular-nums">
-                    <span className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-600 font-mono font-medium tabular-nums">
+                    <span className="flex items-center gap-1.5 text-blue-700 font-semibold">
+                      <Clock className="w-3.5 h-3.5" />
                       Runtime: {formatDuration(totalRuntime)}
                     </span>
                     <span>·</span>
@@ -251,8 +251,8 @@ export default function PlaylistsTab({
                 onClick={() => onSelectActivePlaylist(currentPlaylist.id)}
                 className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
                   currentPlaylist.id === activePlaylistId
-                    ? 'bg-emerald-950/60 border border-emerald-500/50 text-emerald-300'
-                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                    ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-600/20'
                 }`}
               >
                 <Play className="w-4 h-4 fill-current" />
@@ -266,7 +266,7 @@ export default function PlaylistsTab({
                       onDeletePlaylist(currentPlaylist.id);
                     }
                   }}
-                  className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-900 hover:bg-red-950/60 text-slate-400 hover:text-red-400 flex items-center justify-center transition-colors"
+                  className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 flex items-center justify-center transition-colors"
                   title="Delete playlist"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -277,23 +277,23 @@ export default function PlaylistsTab({
 
           {/* 3. ITEMS LIST & REORDERING */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400 px-1">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-500 px-1 uppercase tracking-wider">
               <span>Program Sequence (Order of Execution)</span>
               <span>Reorder / Actions</span>
             </div>
 
             {(!currentPlaylist.items || currentPlaylist.items.length === 0) ? (
-              <div className="p-8 text-center border border-dashed border-slate-800 rounded-xl text-slate-500 text-sm">
+              <div className="p-8 text-center border border-dashed border-slate-300 rounded-xl text-slate-500 text-sm">
                 This playlist has no items yet. Add video clips from your media library or automation cues below.
               </div>
             ) : (
               currentPlaylist.items.map((item, idx) => (
                 <div
                   key={item.id || idx}
-                  className="flex items-center gap-3 p-3 bg-slate-900/80 border border-slate-800/80 rounded-xl text-white hover:border-slate-700 transition-colors"
+                  className="flex items-center gap-3 p-3.5 bg-slate-50/90 border border-slate-200 rounded-xl text-slate-900 hover:border-blue-300 hover:bg-white transition-colors shadow-2xs"
                 >
                   {/* Sequence Number */}
-                  <span className="w-6 text-center font-mono text-xs text-slate-500 font-semibold shrink-0">
+                  <span className="w-6 text-center font-mono text-xs text-slate-500 font-bold shrink-0">
                     {idx + 1}
                   </span>
 
@@ -301,8 +301,8 @@ export default function PlaylistsTab({
                   <div
                     className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                       item.item_type === 'cue'
-                        ? 'bg-blue-900/40 text-blue-400 border border-blue-800/40'
-                        : 'bg-amber-950/40 text-amber-400 border border-amber-800/40'
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        : 'bg-blue-100 text-blue-800 border border-blue-200'
                     }`}
                   >
                     {item.item_type === 'cue' ? <Zap className="w-4 h-4" /> : <Film className="w-4 h-4" />}
@@ -310,12 +310,12 @@ export default function PlaylistsTab({
 
                   {/* Details */}
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate text-slate-100">
+                    <div className="text-sm font-bold truncate text-slate-900">
                       {item.title}
                     </div>
-                    <div className="text-xs text-slate-400 truncate">
+                    <div className="text-xs text-slate-500 truncate mt-0.5">
                       {item.item_type === 'cue' ? (
-                        <span className="text-blue-300">
+                        <span className="text-emerald-700 font-semibold">
                           Automation Trigger ({item.cue_service || 'Home Assistant'})
                         </span>
                       ) : (
@@ -327,7 +327,7 @@ export default function PlaylistsTab({
                   </div>
 
                   {/* Duration Tag */}
-                  <div className="font-mono text-xs tabular-nums text-slate-400 px-2 shrink-0">
+                  <div className="font-mono text-xs font-semibold tabular-nums text-slate-600 px-2 shrink-0">
                     {item.item_type === 'cue' ? 'Instant' : formatDuration(item.duration)}
                   </div>
 
@@ -336,7 +336,7 @@ export default function PlaylistsTab({
                     <button
                       onClick={() => handleMoveItem(idx, 'up')}
                       disabled={idx === 0}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-20 transition-opacity"
+                      className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs"
                       title="Move up"
                     >
                       <ArrowUp className="w-3.5 h-3.5" />
@@ -344,14 +344,14 @@ export default function PlaylistsTab({
                     <button
                       onClick={() => handleMoveItem(idx, 'down')}
                       disabled={idx === (currentPlaylist.items?.length || 0) - 1}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-20 transition-opacity"
+                      className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 disabled:opacity-20 transition-opacity shadow-2xs"
                       title="Move down"
                     >
                       <ArrowDown className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => handleRemoveItem(idx)}
-                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-950 text-slate-400 hover:text-red-400 transition-colors"
+                      className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 transition-colors shadow-2xs"
                       title="Remove item"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -366,17 +366,17 @@ export default function PlaylistsTab({
           <div className="flex flex-wrap gap-3 pt-3">
             <button
               onClick={() => setShowAddModal('media')}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-amber-500/50 text-slate-200 text-xs font-semibold flex items-center gap-2 transition-all"
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 text-blue-800 text-xs font-bold flex items-center gap-2 transition-all shadow-2xs"
             >
-              <Film className="w-4 h-4 text-amber-400" />
+              <Film className="w-4 h-4 text-blue-600" />
               <span>+ Insert Video / Feature</span>
             </button>
 
             <button
               onClick={() => setShowAddModal('cue')}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-blue-500/50 text-slate-200 text-xs font-semibold flex items-center gap-2 transition-all"
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center gap-2 transition-all shadow-2xs"
             >
-              <Zap className="w-4 h-4 text-blue-400" />
+              <Zap className="w-4 h-4 text-emerald-600" />
               <span>+ Insert Automation Cue (Lighting/Curtain)</span>
             </button>
           </div>
@@ -385,15 +385,15 @@ export default function PlaylistsTab({
 
       {/* 5. ADD MEDIA MODAL */}
       {showAddModal === 'media' && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#141824] border border-slate-800 rounded-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Film className="w-5 h-5 text-amber-400" /> Insert Video from Library
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Film className="w-5 h-5 text-blue-600" /> Insert Video from Library
               </h3>
               <button
                 onClick={() => setShowAddModal(null)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-slate-500 hover:text-slate-900 text-xs font-semibold px-2 py-1 bg-slate-100 rounded-lg"
               >
                 Close
               </button>
@@ -409,15 +409,15 @@ export default function PlaylistsTab({
                   <div
                     key={m.id}
                     onClick={() => handleAddMediaItem(m)}
-                    className="p-3 bg-slate-900 hover:bg-amber-950/20 border border-slate-800 hover:border-amber-500/40 rounded-xl cursor-pointer transition-colors flex items-center justify-between"
+                    className="p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl cursor-pointer transition-colors flex items-center justify-between shadow-2xs"
                   >
                     <div>
-                      <div className="text-sm font-semibold text-white">{m.title}</div>
-                      <div className="text-xs text-slate-400">
+                      <div className="text-sm font-bold text-slate-900">{m.title}</div>
+                      <div className="text-xs text-slate-500 font-medium">
                         {m.resolution} · {m.format?.toUpperCase()} · {formatDuration(m.duration)}
                       </div>
                     </div>
-                    <span className="text-xs font-semibold text-amber-400">Add →</span>
+                    <span className="text-xs font-bold text-blue-600">Add →</span>
                   </div>
                 ))
               )}
@@ -428,15 +428,15 @@ export default function PlaylistsTab({
 
       {/* 6. ADD CUE MODAL */}
       {showAddModal === 'cue' && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#141824] border border-slate-800 rounded-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Zap className="w-5 h-5 text-blue-400" /> Insert Automation Cue
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 max-h-[85vh] overflow-y-auto space-y-4 shadow-xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Zap className="w-5 h-5 text-emerald-600" /> Insert Automation Cue
               </h3>
               <button
                 onClick={() => setShowAddModal(null)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-slate-500 hover:text-slate-900 text-xs font-semibold px-2 py-1 bg-slate-100 rounded-lg"
               >
                 Close
               </button>
@@ -452,17 +452,17 @@ export default function PlaylistsTab({
                   <div
                     key={cue.id}
                     onClick={() => handleAddCueItem(cue)}
-                    className="p-3 bg-slate-900 hover:bg-blue-950/30 border border-slate-800 hover:border-blue-500/40 rounded-xl cursor-pointer transition-colors flex items-center justify-between"
+                    className="p-3 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl cursor-pointer transition-colors flex items-center justify-between shadow-2xs"
                   >
                     <div>
-                      <div className="text-sm font-semibold text-white">{cue.name}</div>
-                      <div className="text-xs text-blue-300">
+                      <div className="text-sm font-bold text-slate-900">{cue.name}</div>
+                      <div className="text-xs text-emerald-700 font-medium">
                         {cue.cue_type === 'home_assistant'
                           ? `Home Assistant: ${cue.service} (${cue.entity_id})`
                           : `Webhook`}
                       </div>
                     </div>
-                    <span className="text-xs font-semibold text-blue-400">Insert →</span>
+                    <span className="text-xs font-bold text-emerald-600">Insert →</span>
                   </div>
                 ))
               )}

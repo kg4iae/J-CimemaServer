@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Presentation, Plus, Trash2, Upload, Clock, Check, Eye, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Presentation, Plus, Trash2, Upload, Clock, Check, Eye, Image as ImageIcon } from 'lucide-react';
 import { Slideshow, SlideshowSlide } from '../types/theater';
 import { saveSlideshow, deleteSlideshow, uploadSlide, deleteSlide, setActiveSlideshow } from '../services/api';
 
@@ -102,7 +102,7 @@ export default function SlideshowTab({
   return (
     <div className="space-y-6">
       {/* 1. SLIDESHOW SELECTOR BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-[#141824] border border-slate-800 rounded-2xl">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white border border-slate-200/90 rounded-2xl shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           {slideshows.map((ss) => {
             const isSelected = ss.id === currentShow?.id;
@@ -111,15 +111,15 @@ export default function SlideshowTab({
               <button
                 key={ss.id}
                 onClick={() => setSelectedShowId(ss.id)}
-                className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-2 ${
+                className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 ${
                   isSelected
-                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/10'
-                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    ? 'bg-blue-600 text-white font-bold shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
                 <span>{ss.title}</span>
                 {isActivePreshow && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${isSelected ? 'bg-slate-950/20 text-slate-900' : 'bg-emerald-950 text-emerald-400'}`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider ${isSelected ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                     Active Pre-Show
                   </span>
                 )}
@@ -130,23 +130,23 @@ export default function SlideshowTab({
 
         <button
           onClick={handleCreateNewShow}
-          className="min-h-[44px] px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors shrink-0"
+          className="min-h-[44px] px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shrink-0 shadow-sm shadow-blue-500/20"
         >
-          <Plus className="w-4 h-4 text-amber-400" />
+          <Plus className="w-4 h-4 text-emerald-300" />
           <span>New Slideshow</span>
         </button>
       </div>
 
       {statusMsg && (
-        <div className="p-3 bg-blue-950/50 border border-blue-800/40 rounded-xl text-xs text-blue-200">
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 font-medium">
           {statusMsg}
         </div>
       )}
 
       {currentShow && (
-        <div className="bg-[#141824] border border-slate-800 rounded-2xl p-6 space-y-6">
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 space-y-6 shadow-sm">
           {/* 2. SLIDESHOW HEADER & TIMING CONFIG */}
-          <div className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b border-slate-800">
+          <div className="flex flex-wrap items-start justify-between gap-4 pb-5 border-b border-slate-200">
             <div className="flex-1 min-w-[280px]">
               {editingTitle ? (
                 <div className="space-y-3">
@@ -155,36 +155,36 @@ export default function SlideshowTab({
                     value={titleInput}
                     onChange={(e) => setTitleInput(e.target.value)}
                     placeholder="Slideshow Title"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-semibold text-lg focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 font-bold text-lg focus:outline-none focus:border-blue-600"
                   />
                   <input
                     type="text"
                     value={descInput}
                     onChange={(e) => setDescInput(e.target.value)}
                     placeholder="Description / Audience notes"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-300 text-xs focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5 text-slate-700 text-xs focus:outline-none focus:border-blue-600"
                   />
                   <div className="flex items-center gap-3">
-                    <label className="text-xs text-slate-300 font-medium">Duration per Slide (Seconds):</label>
+                    <label className="text-xs text-slate-700 font-semibold">Duration per Slide (Seconds):</label>
                     <input
                       type="number"
                       min={3}
                       max={120}
                       value={durationInput}
                       onChange={(e) => setDurationInput(Number(e.target.value))}
-                      className="w-24 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1 text-white text-xs font-mono"
+                      className="w-24 bg-slate-50 border border-slate-300 rounded-lg px-3 py-1 text-slate-900 text-xs font-mono font-bold"
                     />
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={handleSaveDetails}
-                      className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5"
+                      className="px-3.5 py-1.5 bg-blue-600 text-white font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-2xs"
                     >
                       <Check className="w-3.5 h-3.5" /> Save Configuration
                     </button>
                     <button
                       onClick={() => setEditingTitle(false)}
-                      className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg"
+                      className="px-3.5 py-1.5 bg-slate-200 text-slate-700 text-xs rounded-lg hover:bg-slate-300"
                     >
                       Cancel
                     </button>
@@ -193,8 +193,8 @@ export default function SlideshowTab({
               ) : (
                 <div>
                   <div className="flex items-center gap-3">
-                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-                      <Presentation className="w-6 h-6 text-amber-400" />
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                      <Presentation className="w-6 h-6 text-blue-600" />
                       {currentShow.title}
                     </h2>
                     <button
@@ -204,17 +204,17 @@ export default function SlideshowTab({
                         setDurationInput(currentShow.slide_duration || 15);
                         setEditingTitle(true);
                       }}
-                      className="text-slate-400 hover:text-white p-1"
+                      className="text-slate-400 hover:text-blue-600 p-1"
                       title="Edit slideshow details"
                     >
                       Edit
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1 font-medium">
                     {currentShow.description || 'Pre-show slide rotation loop'}
                   </p>
-                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-400 font-mono tabular-nums">
-                    <span className="flex items-center gap-1.5 text-amber-400">
+                  <div className="flex items-center gap-4 mt-3 text-xs text-slate-600 font-mono font-medium tabular-nums">
+                    <span className="flex items-center gap-1.5 text-blue-700 font-semibold">
                       <Clock className="w-3.5 h-3.5" />
                       {currentShow.slide_duration || 15}s per slide
                     </span>
@@ -231,8 +231,8 @@ export default function SlideshowTab({
                 onClick={() => handleSetActive(currentShow.id)}
                 className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
                   currentShow.id === activeSlideshowId
-                    ? 'bg-emerald-950/60 border border-emerald-500/50 text-emerald-300'
-                    : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                    ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm shadow-emerald-600/20'
                 }`}
               >
                 <Check className="w-4 h-4" />
@@ -242,7 +242,7 @@ export default function SlideshowTab({
               {slideshows.length > 1 && (
                 <button
                   onClick={() => handleDeleteShow(currentShow.id)}
-                  className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-900 hover:bg-red-950/60 text-slate-400 hover:text-red-400 flex items-center justify-center transition-colors"
+                  className="min-h-[44px] min-w-[44px] rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 flex items-center justify-center transition-colors"
                   title="Delete slideshow"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -253,15 +253,15 @@ export default function SlideshowTab({
 
           {/* 3. SLIDES LIST & ALPHA-NUMERIC ORDERING */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between text-xs font-medium text-slate-400 px-1">
-              <span>Slides Playing in Alpha-Numeric Order (Repeats continuously until Playlist starts)</span>
+            <div className="flex items-center justify-between text-xs font-bold text-slate-500 px-1 uppercase tracking-wider">
+              <span>Slides in Alpha-Numeric Order (Loops until Playlist starts)</span>
               <span>Sequence Key</span>
             </div>
 
             {slides.length === 0 ? (
-              <div className="p-10 text-center border border-dashed border-slate-800 rounded-xl text-slate-500 text-sm space-y-2">
-                <ImageIcon className="w-8 h-8 mx-auto text-slate-600" />
-                <p className="text-slate-300 font-medium">No slides uploaded yet</p>
+              <div className="p-10 text-center border border-dashed border-slate-300 rounded-xl text-slate-500 text-sm space-y-2">
+                <ImageIcon className="w-8 h-8 mx-auto text-slate-400" />
+                <p className="text-slate-800 font-bold">No slides uploaded yet</p>
                 <p className="text-xs text-slate-500">
                   Upload JPG files named like <code>slide_01_welcome.jpg</code>, <code>slide_02_concessions.jpg</code>. They will automatically play in alpha-numeric order!
                 </p>
@@ -271,10 +271,10 @@ export default function SlideshowTab({
                 {slides.map((slide, idx) => (
                   <div
                     key={slide.id}
-                    className="bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden group hover:border-amber-500/50 transition-colors flex flex-col"
+                    className="bg-white border border-slate-200 rounded-xl overflow-hidden group hover:border-blue-400 transition-colors flex flex-col shadow-2xs"
                   >
                     {/* Thumbnail Image */}
-                    <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden">
+                    <div className="aspect-video bg-slate-900 relative flex items-center justify-center overflow-hidden">
                       <img
                         src={slide.file_path}
                         alt={slide.caption || slide.filename}
@@ -283,12 +283,12 @@ export default function SlideshowTab({
                           (e.target as HTMLImageElement).src = '/assets/theater_logo.svg';
                         }}
                       />
-                      <span className="absolute top-2 left-2 bg-black/80 text-amber-400 font-mono text-[11px] px-2 py-0.5 rounded font-bold">
+                      <span className="absolute top-2 left-2 bg-slate-950/80 text-white font-mono text-[11px] px-2 py-0.5 rounded font-bold">
                         #{idx + 1}
                       </span>
                       <button
                         onClick={() => setPreviewSlide(slide)}
-                        className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-amber-500 hover:text-slate-950 text-white rounded-lg transition-colors"
+                        className="absolute bottom-2 right-2 p-1.5 bg-black/70 hover:bg-blue-600 text-white rounded-lg transition-colors"
                         title="Preview slide"
                       >
                         <Eye className="w-3.5 h-3.5" />
@@ -296,21 +296,21 @@ export default function SlideshowTab({
                     </div>
 
                     {/* Details */}
-                    <div className="p-3 flex-1 flex flex-col justify-between space-y-2">
+                    <div className="p-3.5 flex-1 flex flex-col justify-between space-y-2">
                       <div>
-                        <div className="text-xs font-mono text-amber-400/90 truncate font-semibold">
+                        <div className="text-xs font-mono text-blue-700 font-bold truncate">
                           {slide.alpha_key || slide.filename}
                         </div>
-                        <div className="text-xs text-slate-300 truncate mt-0.5">
+                        <div className="text-xs text-slate-700 font-medium truncate mt-0.5">
                           {slide.caption || slide.filename}
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] text-slate-400">
-                        <span>Duration: {currentShow.slide_duration || 15}s</span>
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[11px] text-slate-500">
+                        <span className="font-medium">Duration: {currentShow.slide_duration || 15}s</span>
                         <button
                           onClick={() => handleDeleteSlide(slide.id)}
-                          className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                          className="text-slate-400 hover:text-rose-600 transition-colors p-1"
                           title="Remove slide"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -336,12 +336,12 @@ export default function SlideshowTab({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className="min-h-[46px] px-5 py-2.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-2 shadow-md shadow-amber-500/10 transition-all disabled:opacity-50"
+              className="min-h-[46px] px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-emerald-600/20 transition-all disabled:opacity-50"
             >
               <Upload className="w-4 h-4" />
               <span>{isUploading ? 'Uploading Slides...' : '+ Upload Pre-Show Slide JPG Images'}</span>
             </button>
-            <span className="text-[11px] text-slate-500 block mt-2">
+            <span className="text-[11px] text-slate-500 block mt-2 font-medium">
               Tip: Name your files with prefixes like <code>01_intro.jpg</code>, <code>02_trivia.jpg</code> to maintain your desired alphanumeric order.
             </span>
           </div>
@@ -350,26 +350,26 @@ export default function SlideshowTab({
 
       {/* 5. PREVIEW MODAL */}
       {previewSlide && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#141824] border border-slate-800 rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between">
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
               <div>
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-base font-bold text-slate-900">
                   {previewSlide.caption || previewSlide.filename}
                 </h3>
-                <span className="text-xs font-mono text-amber-400">
+                <span className="text-xs font-mono text-blue-600 font-semibold">
                   Alphanumeric Key: {previewSlide.alpha_key} · Duration: {currentShow?.slide_duration || 15}s
                 </span>
               </div>
               <button
                 onClick={() => setPreviewSlide(null)}
-                className="text-slate-400 hover:text-white text-xs px-2.5 py-1 bg-slate-800 rounded-lg"
+                className="text-slate-600 hover:text-slate-900 text-xs font-semibold px-2.5 py-1 bg-slate-100 rounded-lg hover:bg-slate-200"
               >
                 Close
               </button>
             </div>
 
-            <div className="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center border border-slate-800">
+            <div className="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center border border-slate-200">
               <img
                 src={previewSlide.file_path}
                 alt={previewSlide.caption}
