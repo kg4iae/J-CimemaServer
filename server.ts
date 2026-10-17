@@ -55,6 +55,16 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Video container extensions that the library scanner will register
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
+
+// Unique media id (Date.now() + small random can collide when many files are inserted in one scan)
+let mediaIdCounter = 0;
+function newMediaId(): string {
+  mediaIdCounter = (mediaIdCounter + 1) % 1000000;
+  return `media_${Date.now()}_${mediaIdCounter}_${Math.floor(Math.random() * 1000)}`;
+}
+
 // Helper function to resolve accurate MIME types for video, audio, and images
 function getMimeType(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
@@ -67,6 +77,8 @@ function getMimeType(filename: string): string {
     case '.flac': return 'audio/flac';
     case '.webm': return 'video/webm';
     case '.mp4': return 'video/mp4';
+    case '.mpg':
+    case '.mpeg': return 'video/mpeg';
     case '.jpg':
     case '.jpeg': return 'image/jpeg';
     case '.png': return 'image/png';
@@ -779,9 +791,10 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
 app.post('/api/media/scan', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
+    const videoExtensions = VIDEO_EXTENSIONS;
+    const failedFiles: { filename: string; error: string }[] = [];
     const db = await getDatabase();
-    
+
     // 1. Prune database records for files that were deleted from disk
     const existing = db.exec('SELECT id, filename, duration, resolution, file_size FROM media_items');
     let prunedCount = 0;
@@ -818,33 +831,35 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
       const ext = path.extname(filename).toLowerCase();
       if (!videoExtensions.includes(ext)) continue;
 
+      try {
       const filePath = path.join(MEDIA_DIR, filename);
       const stat = fs.statSync(filePath);
       const meta = await extractMediaMetadata(filePath);
 
       if (!existingMap.has(filename)) {
         // New file: insert with REAL runtime duration and resolution
-        const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        // (parameterized so filenames containing quotes can't break the SQL)
+        const id = newMediaId();
         const title = path.parse(filename).name;
 
-        db.run(`
-          INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
-          VALUES (
-            '${id}',
-            '${title.replace(/'/g, "''")}',
-            '${filename}',
-            '${filename}',
-            '/media/${filename}',
-            ${meta.fileSize || stat.size},
-            ${meta.duration},
-            '${meta.resolution}',
-            '${meta.format}',
-            ${meta.isCompatible ? 1 : 0},
-            '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
-            ${meta.isCompatible ? 100 : 0},
-            datetime('now')
-          )
-        `);
+        db.run(
+          `INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+          [
+            id,
+            title,
+            filename,
+            filename,
+            `/media/${filename}`,
+            meta.fileSize || stat.size,
+            meta.duration,
+            meta.resolution,
+            meta.format,
+            meta.isCompatible ? 1 : 0,
+            meta.isCompatible ? 'ready' : 'needs_conversion',
+            meta.isCompatible ? 100 : 0,
+          ]
+        );
         scannedCount++;
       } else {
         // Existing file: update runtime and resolution if it had hardcoded or inaccurate values
@@ -874,6 +889,11 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
           refreshedCount++;
         }
       }
+      } catch (fileErr: any) {
+        // One bad file must not abort the whole scan
+        console.error(`Scan: failed to process ${filename}:`, fileErr);
+        failedFiles.push({ filename, error: fileErr?.message || String(fileErr) });
+      }
     }
 
     // Clean any orphaned playlist items
@@ -889,8 +909,9 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
       newFilesCount: scannedCount,
       prunedCount,
       refreshedCount,
+      failedFiles,
       totalFiles: files.length,
-      message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.`,
+      message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.${failedFiles.length ? ` ${failedFiles.length} file(s) failed.` : ''}`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -901,9 +922,9 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
 app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
+    const videoExtensions = VIDEO_EXTENSIONS;
     const db = await getDatabase();
-    
+
     // 1. Purge missing records
     const existing = db.exec('SELECT id, filename FROM media_items');
     let prunedCount = 0;
@@ -929,7 +950,7 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
       const filePath = path.join(MEDIA_DIR, filename);
       const meta = await extractMediaMetadata(filePath);
 
-      const checkRes = db.exec(`SELECT id FROM media_items WHERE filename = '${filename}'`);
+      const checkRes = db.exec(`SELECT id FROM media_items WHERE filename = ?`, [filename]);
       if (checkRes[0]?.values[0]) {
         const id = checkRes[0].values[0][0];
         db.run(`
@@ -948,26 +969,26 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
         `);
         updatedCount++;
       } else {
-        const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const id = newMediaId();
         const title = path.parse(filename).name;
-        db.run(`
-          INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
-          VALUES (
-            '${id}',
-            '${title.replace(/'/g, "''")}',
-            '${filename}',
-            '${filename}',
-            '/media/${filename}',
-            ${meta.fileSize},
-            ${meta.duration},
-            '${meta.resolution}',
-            '${meta.format}',
-            ${meta.isCompatible ? 1 : 0},
-            '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
-            ${meta.isCompatible ? 100 : 0},
-            datetime('now')
-          )
-        `);
+        db.run(
+          `INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+          [
+            id,
+            title,
+            filename,
+            filename,
+            `/media/${filename}`,
+            meta.fileSize,
+            meta.duration,
+            meta.resolution,
+            meta.format,
+            meta.isCompatible ? 1 : 0,
+            meta.isCompatible ? 'ready' : 'needs_conversion',
+            meta.isCompatible ? 100 : 0,
+          ]
+        );
         updatedCount++;
       }
     }

@@ -104,7 +104,10 @@ export default function MediaIngestTab({
       if (res.newFilesCount > 0) parts.push(`${res.newFilesCount} new file(s) registered`);
       if (res.prunedCount && res.prunedCount > 0) parts.push(`${res.prunedCount} deleted file(s) removed`);
       if (res.refreshedCount && res.refreshedCount > 0) parts.push(`${res.refreshedCount} runtime(s) updated`);
-      
+      if (res.failedFiles && res.failedFiles.length > 0) {
+        parts.push(`${res.failedFiles.length} file(s) failed (${res.failedFiles.map(f => f.filename).join(', ')})`);
+      }
+
       const summary = parts.length > 0 ? parts.join(', ') : 'All files in sync! No deleted or missing items.';
       setStatusMessage(`Scan Complete: ${summary}`);
       onRefresh();
@@ -248,7 +251,7 @@ export default function MediaIngestTab({
               type="file"
               ref={fileInputRef}
               onChange={handleFileUpload}
-              accept="video/*,.mkv,.mp4,.mov,.avi,.webm,.ts"
+              accept="video/*,.mkv,.mp4,.mov,.avi,.webm,.ts,.mpg,.mpeg"
               className="hidden"
             />
             <button

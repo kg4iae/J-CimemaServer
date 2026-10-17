@@ -72,9 +72,13 @@ export async function uploadMedia(file: File): Promise<{ success: boolean; media
   return res.json();
 }
 
-export async function scanLocalMedia(): Promise<{ success: boolean; newFilesCount: number; prunedCount?: number; refreshedCount?: number; message?: string }> {
+export async function scanLocalMedia(): Promise<{ success: boolean; newFilesCount: number; prunedCount?: number; refreshedCount?: number; failedFiles?: { filename: string; error: string }[]; message?: string }> {
   const res = await fetch(`${API_BASE}/media/scan`, { method: 'POST' });
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.error) {
+    throw new Error(data?.error || `Server returned ${res.status}`);
+  }
+  return data;
 }
 
 export async function rescanAllMedia(): Promise<{ success: boolean; updatedCount: number; prunedCount: number }> {
