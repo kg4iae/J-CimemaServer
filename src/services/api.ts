@@ -220,3 +220,13 @@ export async function setActiveSlideshow(slideshowId: string): Promise<void> {
     body: JSON.stringify({ slideshowId }),
   });
 }
+
+export async function uploadPreshowAudio(file: File): Promise<{ success: boolean; audioUrl: string; name: string }> {
+  const formData = new FormData();
+  formData.append('audio', file);
+  const res = await fetch(`${API_BASE}/preshow/audio/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  return res.json();
+}

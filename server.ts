@@ -54,13 +54,32 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static media files with HTTP 206 Partial Content support for smooth video streaming
+// Helper function to resolve accurate MIME types for video, audio, and images
+function getMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  switch (ext) {
+    case '.mp3': return 'audio/mpeg';
+    case '.wav': return 'audio/wav';
+    case '.ogg': return 'audio/ogg';
+    case '.m4a': return 'audio/mp4';
+    case '.aac': return 'audio/aac';
+    case '.flac': return 'audio/flac';
+    case '.webm': return 'video/webm';
+    case '.mp4': return 'video/mp4';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.png': return 'image/png';
+    case '.svg': return 'image/svg+xml';
+    default: return 'application/octet-stream';
+  }
+}
+
+// Serve static media files with HTTP 206 Partial Content support for smooth audio/video streaming
 app.get('/media/:filename', (req: Request, res: Response): void => {
   const filename = req.params.filename;
   const filePath = path.join(MEDIA_DIR, filename);
 
   if (!fs.existsSync(filePath)) {
-    // Check if it's one of the default sample media items, generate or return 404
     res.status(404).json({ error: 'Media file not found' });
     return;
   }
@@ -68,6 +87,7 @@ app.get('/media/:filename', (req: Request, res: Response): void => {
   const stat = fs.statSync(filePath);
   const fileSize = stat.size;
   const range = req.headers.range;
+  const mimeType = getMimeType(filename);
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
@@ -79,17 +99,55 @@ app.get('/media/:filename', (req: Request, res: Response): void => {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
-      'Content-Type': filename.endsWith('.webm') ? 'video/webm' : 'video/mp4',
+      'Content-Type': mimeType,
     };
     res.writeHead(206, head);
     file.pipe(res);
   } else {
     const head = {
       'Content-Length': fileSize,
-      'Content-Type': filename.endsWith('.webm') ? 'video/webm' : 'video/mp4',
+      'Content-Type': mimeType,
     };
     res.writeHead(200, head);
     fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+// Pre-show Walk-in Audio upload endpoint
+app.post('/api/preshow/audio/upload', upload.single('audio'), async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'No audio file uploaded' });
+      return;
+    }
+    const publicAudioPath = `/media/${req.file.filename}`;
+    const originalName = req.file.originalname;
+    const db = await getDatabase();
+    db.run(`
+      INSERT INTO settings (key, value) VALUES ('preshow_audio_url', '${publicAudioPath}')
+      ON CONFLICT(key) DO UPDATE SET value = '${publicAudioPath}'
+    `);
+    db.run(`
+      INSERT INTO settings (key, value) VALUES ('preshow_audio_name', '${originalName.replace(/'/g, "''")}')
+      ON CONFLICT(key) DO UPDATE SET value = '${originalName.replace(/'/g, "''")}'
+    `);
+    db.run(`
+      INSERT INTO settings (key, value) VALUES ('preshow_music_mode', 'custom_audio')
+      ON CONFLICT(key) DO UPDATE SET value = 'custom_audio'
+    `);
+    saveDatabase();
+    broadcast('SETTINGS_UPDATED', {
+      preshow_audio_url: publicAudioPath,
+      preshow_audio_name: originalName,
+      preshow_music_mode: 'custom_audio',
+    });
+    res.json({
+      success: true,
+      audioUrl: publicAudioPath,
+      name: originalName,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 

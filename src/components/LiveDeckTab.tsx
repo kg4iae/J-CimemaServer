@@ -105,24 +105,42 @@ export default function LiveDeckTab({
           </div>
         </div>
 
-        {/* Live Deck Selector */}
-        <div className="flex items-center gap-2">
-          <label htmlFor="preshow-select" className="text-xs font-semibold text-slate-700 hidden sm:inline">
-            Active Pre-Show:
-          </label>
-          <select
-            id="preshow-select"
-            value={currentShowId}
-            onChange={(e) => onSelectSlideshow && onSelectSlideshow(e.target.value)}
-            className="min-h-[42px] bg-slate-50 border border-slate-300 hover:border-blue-500 rounded-xl px-3.5 py-2 text-xs font-semibold text-blue-700 focus:outline-none focus:border-blue-600 transition-colors cursor-pointer shadow-2xs"
+        {/* Live Deck Controls: Audio Toggle and Slideshow Selector */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Quick Pre-show Audio Toggle */}
+          <button
+            type="button"
+            onClick={() => onControl(playback.spotifyPlaying ? 'spotify_pause' : 'spotify_play')}
+            title="Toggle Pre-show Walk-in Music"
+            className={`min-h-[42px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border cursor-pointer active:scale-95 ${
+              playback.spotifyPlaying
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+            }`}
           >
-            {slideshows.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title} ({s.slides?.length || 0} slides · {s.slide_duration || 15}s)
-              </option>
-            ))}
-            <option value="none">None (Theater Standby Logo Only)</option>
-          </select>
+            <Music className={`w-3.5 h-3.5 ${playback.spotifyPlaying ? 'text-emerald-600 animate-pulse' : 'text-slate-400'}`} />
+            <span>Walk-In Audio: {playback.spotifyPlaying ? 'ON' : 'OFF'}</span>
+          </button>
+
+          {/* Slideshow Selector */}
+          <div className="flex items-center gap-2">
+            <label htmlFor="preshow-select" className="text-xs font-semibold text-slate-700 hidden sm:inline">
+              Slideshow:
+            </label>
+            <select
+              id="preshow-select"
+              value={currentShowId}
+              onChange={(e) => onSelectSlideshow && onSelectSlideshow(e.target.value)}
+              className="min-h-[42px] bg-slate-50 border border-slate-300 hover:border-blue-500 rounded-xl px-3.5 py-2 text-xs font-semibold text-blue-700 focus:outline-none focus:border-blue-600 transition-colors cursor-pointer shadow-2xs"
+            >
+              {slideshows.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} ({s.slides?.length || 0} slides · {s.slide_duration || 15}s)
+                </option>
+              ))}
+              <option value="none">None (Theater Standby Logo Only)</option>
+            </select>
+          </div>
         </div>
       </div>
 

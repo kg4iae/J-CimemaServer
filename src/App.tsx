@@ -48,6 +48,7 @@ import {
   fetchPlaybackState,
   fetchSlideshows,
   setActiveSlideshow,
+  controlSpotify,
 } from './services/api';
 
 export default function App() {
@@ -228,6 +229,22 @@ export default function App() {
   // Master playback controller handler
   const handleControl = async (action: string, value?: any) => {
     try {
+      if (action === 'spotify_play') {
+        await controlSpotify('play');
+        setPlayback((prev) => ({ ...prev, spotifyPlaying: true }));
+        return;
+      }
+      if (action === 'spotify_pause') {
+        await controlSpotify('pause');
+        setPlayback((prev) => ({ ...prev, spotifyPlaying: false }));
+        return;
+      }
+      if (action === 'spotify_toggle') {
+        const next = !playback.spotifyPlaying;
+        await controlSpotify(next ? 'play' : 'pause');
+        setPlayback((prev) => ({ ...prev, spotifyPlaying: next }));
+        return;
+      }
       const updated = await controlPlayback(action, value);
       setPlayback(updated);
     } catch (err) {

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Volume2, VolumeX, Music, Sparkles } from 'lucide-react';
 import { PlaybackState, Playlist, PlaylistItem, TheaterSettings, Slideshow, SlideshowSlide } from '../types/theater';
 import { fetchPlaylists, fetchSettings, syncPlaybackProgress, fetchSlideshows } from '../services/api';
+import { preshowAudio } from '../services/preshowAudio';
 
 export default function ProjectorScreen() {
   const [playback, setPlayback] = useState<PlaybackState>({
@@ -33,11 +35,37 @@ export default function ProjectorScreen() {
 
   // Pre-show slideshow rotation state
   const [currentSlideIndex, setCurrentSlideIndex] = useState<number>(0);
+  const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const animFrameRef = useRef<number | null>(null);
+
+  // Subscribe to browser audio autoplay state
+  useEffect(() => {
+    const unsub = preshowAudio.subscribeAutoplay(setIsAutoplayBlocked);
+    return unsub;
+  }, []);
+
+  // Synchronize Pre-Show Walk-In Audio engine with theater state
+  useEffect(() => {
+    preshowAudio.syncState({
+      isPlaylistPlaying: playback.isPlaying,
+      spotifyPlaying: playback.spotifyPlaying,
+      volume: playback.volume,
+      isMuted: playback.isMuted,
+      preshowMusicMode: settings.preshow_music_mode,
+      customAudioUrl: settings.preshow_audio_url,
+    });
+  }, [
+    playback.isPlaying,
+    playback.spotifyPlaying,
+    playback.volume,
+    playback.isMuted,
+    settings.preshow_music_mode,
+    settings.preshow_audio_url,
+  ]);
 
   // Load initial settings, playlists, and slideshows
   const refreshAll = () => {
@@ -117,6 +145,12 @@ export default function ProjectorScreen() {
             activeSlideshowId: payload.data.activeSlideshowId,
           }));
           setCurrentSlideIndex(0);
+        } else if (payload.type === 'SPOTIFY_STATE') {
+          setPlayback((prev) => ({
+            ...prev,
+            spotifyPlaying: payload.data.isPlaying,
+            spotifyTrack: payload.data.track || prev.spotifyTrack,
+          }));
         } else if (payload.type === 'SLIDESHOWS_UPDATED') {
           fetchSlideshows().then(setSlideshows).catch(console.error);
         } else if (payload.type === 'SETTINGS_UPDATED' || payload.type === 'LOGO_UPDATED') {
@@ -205,10 +239,35 @@ export default function ProjectorScreen() {
 
   return (
     <div
+      onClick={() => preshowAudio.unlockAudio()}
       onDoubleClick={toggleFullscreen}
-      className="relative w-screen h-screen bg-black overflow-hidden select-none cursor-none flex items-center justify-center"
-      title="CinemaBooth Projector View (Double-click or F11 for Fullscreen)"
+      className="relative w-screen h-screen bg-black overflow-hidden select-none cursor-default flex items-center justify-center"
+      title="CinemaBooth Projector View (Click anywhere for Audio • Double-click or F11 for Fullscreen)"
     >
+      {/* Autoplay unlock prompt (only shown if browser suspended audio playback) */}
+      {isAutoplayBlocked && !isVideoItem && playback.spotifyPlaying && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            preshowAudio.unlockAudio();
+          }}
+          className="absolute top-6 right-6 z-50 flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-slate-900/90 border border-cyan-400 text-white shadow-2xl backdrop-blur-md cursor-pointer hover:bg-slate-800 transition-all group animate-bounce"
+        >
+          <Volume2 className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
+          <span className="text-xs font-semibold tracking-wide text-cyan-200">
+            Click Screen to Enable Walk-In Audio
+          </span>
+        </button>
+      )}
+
+      {/* Pre-show audio status monitor in bottom-left */}
+      {!isVideoItem && (
+        <div className="absolute bottom-3 left-4 z-40 flex items-center gap-2 text-[11px] text-white/40 font-mono tracking-wider opacity-40 hover:opacity-100 transition-opacity pointer-events-none">
+          <Music className="w-3.5 h-3.5 text-cyan-400" />
+          <span>WALK-IN AUDIO: {playback.spotifyPlaying ? (isAutoplayBlocked ? 'MUTED (CLICK TO UNMUTE)' : 'ACTIVE') : 'PAUSED'}</span>
+        </div>
+      )}
+
       {/* 1. STANDBY / PRE-SHOW DISPLAY (Shown when not playing video) */}
       {!isVideoItem && (
         <div className="absolute inset-0 flex items-center justify-center w-full h-full bg-[#050608] transition-opacity duration-1000">
