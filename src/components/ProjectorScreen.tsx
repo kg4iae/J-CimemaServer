@@ -286,20 +286,7 @@ export default function ProjectorScreen() {
         </div>
       )}
 
-      {/* Spotify Walk-In Music Player on Projector Screen when Spotify mode is active */}
-      {!isVideoItem && settings.preshow_music_mode === 'spotify' && playback.spotifyPlaying && (
-        <div className="absolute bottom-5 right-5 z-40 w-84 max-w-[90vw] rounded-2xl overflow-hidden shadow-2xl border border-emerald-500/40 bg-black/95 backdrop-blur-md transition-all">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-950/80 border-b border-emerald-500/30 text-[11px] text-emerald-300 font-bold">
-            <span className="flex items-center gap-1.5">
-              <Music className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-              Spotify Walk-In Music
-            </span>
-            <span className="text-[10px] text-emerald-400/80 font-mono">HDMI Audio</span>
-          </div>
-          
-        </div>
-      )}
-
+     
       {/* 1. STANDBY / PRE-SHOW DISPLAY (Shown when not playing video) */}
       {!isVideoItem && (
         <div className="absolute inset-0 flex items-center justify-center w-full h-full bg-[#050608] transition-opacity duration-1000">
