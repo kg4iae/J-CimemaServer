@@ -296,16 +296,7 @@ export default function ProjectorScreen() {
             </span>
             <span className="text-[10px] text-emerald-400/80 font-mono">HDMI Audio</span>
           </div>
-          <iframe
-            src={getSpotifyEmbedUrl(settings.spotify_playlist_uri)}
-            width="100%"
-            height="152"
-            frameBorder="0"
-            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-            loading="lazy"
-            title="Spotify Pre-Show Walk-In Music"
-            className="rounded-b-2xl"
-          />
+          
         </div>
       )}
 
