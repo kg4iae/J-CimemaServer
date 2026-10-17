@@ -165,8 +165,8 @@ export default function LiveDeckTab({
           {/* Spotify & Preshow indicator */}
           <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200/80 text-xs">
             <Music className={`w-3.5 h-3.5 ${playback.spotifyPlaying ? 'text-emerald-600 animate-pulse' : 'text-slate-400'}`} />
-            <span className={playback.spotifyPlaying ? 'text-emerald-800 font-semibold' : 'text-slate-500 font-medium'}>
-              {playback.spotifyPlaying ? 'Preshow Audio Active' : 'Audio Muted for Feature'}
+            <span className={playback.spotifyPlaying ? 'text-emerald-800 font-semibold truncate max-w-[200px]' : 'text-slate-500 font-medium'}>
+              {playback.spotifyPlaying ? (playback.spotifyTrack || 'Walk-In Music Active') : 'Audio Muted for Feature'}
             </span>
           </div>
         </div>

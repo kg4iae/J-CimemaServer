@@ -8,6 +8,7 @@ import cors from 'cors';
 import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getDatabase, saveDatabase } from './server/database.ts';
+import { extractMediaMetadata } from './server/mediaMetadata.ts';
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -678,13 +679,35 @@ app.get('/api/media', async (req: Request, res: Response) => {
       });
       return obj;
     });
-    res.json(media);
+
+    // Check disk existence and automatically clean up orphan/deleted database records
+    const validMedia: typeof media = [];
+    let hasPruned = false;
+
+    for (const item of media) {
+      const filePath = path.join(MEDIA_DIR, item.filename);
+      if (fs.existsSync(filePath)) {
+        validMedia.push(item);
+      } else {
+        // Physical file does not exist on disk! Prune it from database
+        db.run(`DELETE FROM media_items WHERE id = '${item.id}'`);
+        db.run(`DELETE FROM playlist_items WHERE media_id = '${item.id}'`);
+        hasPruned = true;
+      }
+    }
+
+    if (hasPruned) {
+      saveDatabase();
+      broadcast('MEDIA_UPDATED', { pruned: true });
+    }
+
+    res.json(validMedia);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Upload media file
+// Upload media file with accurate metadata extraction
 app.post('/api/media/upload', upload.single('video'), async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.file) {
@@ -693,8 +716,8 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
     }
 
     const file = req.file;
-    const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
-    const isWebCompatible = ['mp4', 'webm'].includes(ext);
+    const filePath = path.join(MEDIA_DIR, file.filename);
+    const meta = await extractMediaMetadata(filePath);
     const id = `media_${Date.now()}`;
     const cleanTitle = path.parse(file.originalname).name;
 
@@ -707,13 +730,13 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
         '${file.filename}',
         '${file.originalname.replace(/'/g, "''")}',
         '/media/${file.filename}',
-        ${file.size},
-        120.0,
-        '1920x1080',
-        '${ext}',
-        ${isWebCompatible ? 1 : 0},
-        '${isWebCompatible ? 'ready' : 'needs_conversion'}',
-        ${isWebCompatible ? 100 : 0},
+        ${meta.fileSize || file.size},
+        ${meta.duration},
+        '${meta.resolution}',
+        '${meta.format}',
+        ${meta.isCompatible ? 1 : 0},
+        '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
+        ${meta.isCompatible ? 100 : 0},
         datetime('now')
       )
     `);
@@ -726,8 +749,10 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
         id,
         title: cleanTitle,
         filename: file.filename,
-        format: ext,
-        isCompatible: isWebCompatible,
+        duration: meta.duration,
+        resolution: meta.resolution,
+        format: meta.format,
+        isCompatible: meta.isCompatible,
       },
     });
   } catch (err: any) {
@@ -735,26 +760,51 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
   }
 });
 
-// Scan local directory for new media files
+// Scan local directory for new media files, probe exact runtimes, and prune deleted files
 app.post('/api/media/scan', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
     const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
     const db = await getDatabase();
-    const existing = db.exec('SELECT filename FROM media_items');
-    const existingSet = new Set<string>();
+    
+    // 1. Prune database records for files that were deleted from disk
+    const existing = db.exec('SELECT id, filename, duration, resolution, file_size FROM media_items');
+    let prunedCount = 0;
+    let refreshedCount = 0;
+    const existingMap = new Map<string, { id: string; duration: number; resolution: string; file_size: number }>();
+
     if (existing[0]?.values) {
-      existing[0].values.forEach(([fn]) => existingSet.add(fn as string));
+      for (const row of existing[0].values) {
+        const id = row[0] as string;
+        const fn = row[1] as string;
+        const dur = Number(row[2]) || 0;
+        const res = (row[3] as string) || '';
+        const size = Number(row[4]) || 0;
+
+        const filePath = path.join(MEDIA_DIR, fn);
+        if (!fs.existsSync(filePath)) {
+          // File was deleted from disk!
+          db.run(`DELETE FROM media_items WHERE id = '${id}'`);
+          db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+          prunedCount++;
+        } else {
+          existingMap.set(fn, { id, duration: dur, resolution: res, file_size: size });
+        }
+      }
     }
 
+    // 2. Scan physical directory, probe real metadata for new files and fix inaccurate runtimes
     let scannedCount = 0;
     for (const filename of files) {
       const ext = path.extname(filename).toLowerCase();
-      if (videoExtensions.includes(ext) && !existingSet.has(filename)) {
-        const filePath = path.join(MEDIA_DIR, filename);
-        const stat = fs.statSync(filePath);
-        const cleanFormat = ext.replace('.', '');
-        const isCompatible = ['mp4', 'webm'].includes(cleanFormat) ? 1 : 0;
+      if (!videoExtensions.includes(ext)) continue;
+
+      const filePath = path.join(MEDIA_DIR, filename);
+      const stat = fs.statSync(filePath);
+      const meta = await extractMediaMetadata(filePath);
+
+      if (!existingMap.has(filename)) {
+        // New file: insert with REAL runtime duration and resolution
         const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         const title = path.parse(filename).name;
 
@@ -766,23 +816,168 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
             '${filename}',
             '${filename}',
             '/media/${filename}',
-            ${stat.size},
-            180.0,
-            '1920x1080',
-            '${cleanFormat}',
-            ${isCompatible},
-            '${isCompatible ? 'ready' : 'needs_conversion'}',
-            ${isCompatible ? 100 : 0},
+            ${meta.fileSize || stat.size},
+            ${meta.duration},
+            '${meta.resolution}',
+            '${meta.format}',
+            ${meta.isCompatible ? 1 : 0},
+            '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
+            ${meta.isCompatible ? 100 : 0},
             datetime('now')
           )
         `);
         scannedCount++;
+      } else {
+        // Existing file: update runtime and resolution if it had hardcoded or inaccurate values
+        const current = existingMap.get(filename)!;
+        if (
+          Math.abs(current.duration - meta.duration) > 0.5 ||
+          current.resolution !== meta.resolution ||
+          current.duration === 180 ||
+          current.duration === 120
+        ) {
+          db.run(`
+            UPDATE media_items
+            SET duration = ${meta.duration},
+                resolution = '${meta.resolution}',
+                file_size = ${meta.fileSize || stat.size},
+                format = '${meta.format}',
+                is_compatible = ${meta.isCompatible ? 1 : 0}
+            WHERE id = '${current.id}'
+          `);
+          // Also update any playlist items referencing this media
+          db.run(`
+            UPDATE playlist_items
+            SET duration = ${meta.duration}
+            WHERE media_id = '${current.id}'
+          `);
+          refreshedCount++;
+        }
       }
     }
 
     saveDatabase();
-    broadcast('MEDIA_UPDATED', { scannedCount });
-    res.json({ success: true, newFilesCount: scannedCount });
+    broadcast('MEDIA_UPDATED', { scannedCount, prunedCount, refreshedCount });
+    res.json({
+      success: true,
+      newFilesCount: scannedCount,
+      prunedCount,
+      refreshedCount,
+      totalFiles: files.length,
+      message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Force re-scan and fix all runtimes and purge missing files
+app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
+  try {
+    const files = fs.readdirSync(MEDIA_DIR);
+    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
+    const db = await getDatabase();
+    
+    // 1. Purge missing records
+    const existing = db.exec('SELECT id, filename FROM media_items');
+    let prunedCount = 0;
+    if (existing[0]?.values) {
+      for (const row of existing[0].values) {
+        const id = row[0] as string;
+        const fn = row[1] as string;
+        const filePath = path.join(MEDIA_DIR, fn);
+        if (!fs.existsSync(filePath)) {
+          db.run(`DELETE FROM media_items WHERE id = '${id}'`);
+          db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+          prunedCount++;
+        }
+      }
+    }
+
+    // 2. Refresh metadata for all valid files
+    let updatedCount = 0;
+    for (const filename of files) {
+      const ext = path.extname(filename).toLowerCase();
+      if (!videoExtensions.includes(ext)) continue;
+      const filePath = path.join(MEDIA_DIR, filename);
+      const meta = await extractMediaMetadata(filePath);
+
+      const checkRes = db.exec(`SELECT id FROM media_items WHERE filename = '${filename}'`);
+      if (checkRes[0]?.values[0]) {
+        const id = checkRes[0].values[0][0];
+        db.run(`
+          UPDATE media_items
+          SET duration = ${meta.duration},
+              resolution = '${meta.resolution}',
+              file_size = ${meta.fileSize},
+              format = '${meta.format}',
+              is_compatible = ${meta.isCompatible ? 1 : 0}
+          WHERE id = '${id}'
+        `);
+        db.run(`
+          UPDATE playlist_items
+          SET duration = ${meta.duration}
+          WHERE media_id = '${id}'
+        `);
+        updatedCount++;
+      } else {
+        const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const title = path.parse(filename).name;
+        db.run(`
+          INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+          VALUES (
+            '${id}',
+            '${title.replace(/'/g, "''")}',
+            '${filename}',
+            '${filename}',
+            '/media/${filename}',
+            ${meta.fileSize},
+            ${meta.duration},
+            '${meta.resolution}',
+            '${meta.format}',
+            ${meta.isCompatible ? 1 : 0},
+            '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
+            ${meta.isCompatible ? 100 : 0},
+            datetime('now')
+          )
+        `);
+        updatedCount++;
+      }
+    }
+
+    saveDatabase();
+    broadcast('MEDIA_UPDATED', { updatedCount, prunedCount });
+    res.json({ success: true, updatedCount, prunedCount });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete media item from library and remove physical file
+app.delete('/api/media/:id', async (req: Request, res: Response): Promise<void> => {
+  const { id } = req.params;
+  try {
+    const db = await getDatabase();
+    const itemRes = db.exec(`SELECT filename FROM media_items WHERE id = '${id}'`);
+    if (itemRes[0]?.values[0]) {
+      const filename = itemRes[0].values[0][0] as string;
+      const filePath = path.join(MEDIA_DIR, filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (e) {
+          console.warn('Could not delete physical file:', e);
+        }
+      }
+    }
+
+    db.run(`DELETE FROM media_items WHERE id = '${id}'`);
+    db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+    saveDatabase();
+
+    broadcast('MEDIA_UPDATED', { deletedId: id });
+    broadcast('PLAYLISTS_UPDATED', {});
+    res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1323,14 +1518,46 @@ app.get('/api/spotify', async (req: Request, res: Response) => {
 
 app.post('/api/spotify/action', async (req: Request, res: Response) => {
   const { action, track, artist } = req.body;
+  const db = await getDatabase();
+
+  if (action === 'launch' || action === 'open') {
+    const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
+    const spotifyUri = uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I';
+    if (process.platform === 'win32') {
+      try {
+        spawn('cmd', ['/c', 'start', String(spotifyUri)]);
+      } catch (e) {
+        console.warn('Could not launch Spotify on Windows:', e);
+      }
+    }
+    res.json({ success: true, launched: spotifyUri });
+    return;
+  }
+
   if (action === 'play') {
     playbackState.spotifyPlaying = true;
     if (track) playbackState.spotifyTrack = track;
     if (artist) playbackState.spotifyArtist = artist;
+    if (process.platform === 'win32') {
+      try {
+        // Send Windows Media Play/Pause
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+      } catch {}
+    }
   } else if (action === 'pause') {
     playbackState.spotifyPlaying = false;
+    if (process.platform === 'win32') {
+      try {
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+      } catch {}
+    }
   } else if (action === 'toggle') {
     playbackState.spotifyPlaying = !playbackState.spotifyPlaying;
+    if (process.platform === 'win32') {
+      try {
+        spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+      } catch {}
+    }
   }
 
   broadcast('SPOTIFY_STATE', {
@@ -1361,6 +1588,11 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
       if (autoPause && playbackState.spotifyPlaying) {
         playbackState.spotifyPlaying = false;
         broadcast('SPOTIFY_STATE', { isPlaying: false, track: playbackState.spotifyTrack });
+        if (process.platform === 'win32') {
+          try {
+            spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+          } catch {}
+        }
       }
       break;
     }
@@ -1380,6 +1612,11 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
       if (autoResume) {
         playbackState.spotifyPlaying = true;
         broadcast('SPOTIFY_STATE', { isPlaying: true, track: playbackState.spotifyTrack });
+        if (process.platform === 'win32') {
+          try {
+            spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
+          } catch {}
+        }
       }
       break;
     }

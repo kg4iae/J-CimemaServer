@@ -191,11 +191,13 @@ Write-Host "`n[4/6] Creating storage directories..." -ForegroundColor Yellow
 $mediaDir = Join-Path $InstallPath "media"
 $dataDir = Join-Path $InstallPath "data"
 $slidesDir = Join-Path $InstallPath "public\assets\slides"
+$audioDir = Join-Path $InstallPath "public\assets\audio"
 
 New-Item -ItemType Directory -Force -Path $mediaDir | Out-Null
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $slidesDir | Out-Null
-Write-Host "       Local folders initialized: media, data (SQLite), slides" -ForegroundColor Green
+New-Item -ItemType Directory -Force -Path $audioDir | Out-Null
+Write-Host "       Local folders initialized: media, data (SQLite), slides, audio" -ForegroundColor Green
 
 # 6. Install Node dependencies
 Write-Host "`n[5/6] Installing Node.js packages with npm..." -ForegroundColor Yellow

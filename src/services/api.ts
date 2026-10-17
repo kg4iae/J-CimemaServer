@@ -72,9 +72,18 @@ export async function uploadMedia(file: File): Promise<{ success: boolean; media
   return res.json();
 }
 
-export async function scanLocalMedia(): Promise<{ success: boolean; newFilesCount: number }> {
+export async function scanLocalMedia(): Promise<{ success: boolean; newFilesCount: number; prunedCount?: number; refreshedCount?: number; message?: string }> {
   const res = await fetch(`${API_BASE}/media/scan`, { method: 'POST' });
   return res.json();
+}
+
+export async function rescanAllMedia(): Promise<{ success: boolean; updatedCount: number; prunedCount: number }> {
+  const res = await fetch(`${API_BASE}/media/rescan-all`, { method: 'POST' });
+  return res.json();
+}
+
+export async function deleteMedia(id: string): Promise<void> {
+  await fetch(`${API_BASE}/media/${id}`, { method: 'DELETE' });
 }
 
 export async function triggerConversion(mediaId: string): Promise<{ success: boolean }> {
@@ -128,7 +137,7 @@ export async function fetchSpotifyState(): Promise<any> {
   return res.json();
 }
 
-export async function controlSpotify(action: 'play' | 'pause' | 'toggle', track?: string, artist?: string): Promise<any> {
+export async function controlSpotify(action: 'play' | 'pause' | 'toggle' | 'launch', track?: string, artist?: string): Promise<any> {
   const res = await fetch(`${API_BASE}/spotify/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

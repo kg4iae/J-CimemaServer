@@ -10,9 +10,18 @@ import {
   Youtube,
   Download,
   Terminal,
+  Trash2,
+  Sparkles,
 } from 'lucide-react';
 import { MediaItem } from '../types/theater';
-import { uploadMedia, scanLocalMedia, triggerConversion, ingestYouTubeVideo } from '../services/api';
+import {
+  uploadMedia,
+  scanLocalMedia,
+  triggerConversion,
+  ingestYouTubeVideo,
+  deleteMedia,
+  rescanAllMedia,
+} from '../services/api';
 
 interface MediaIngestTabProps {
   mediaList: MediaItem[];
@@ -31,9 +40,17 @@ function formatBytes(bytes: number): string {
 
 function formatDuration(sec: number): string {
   if (!sec || isNaN(sec)) return '--:--';
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}m ${s.toString().padStart(2, '0')}s`;
+  const totalSec = Math.round(sec);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`;
+  }
+  if (m > 0) {
+    return `${m}m ${s.toString().padStart(2, '0')}s`;
+  }
+  return `${s}s`;
 }
 
 export default function MediaIngestTab({
@@ -43,6 +60,7 @@ export default function MediaIngestTab({
   onRefresh,
 }: MediaIngestTabProps) {
   const [isScanning, setIsScanning] = useState(false);
+  const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [previewItem, setPreviewItem] = useState<MediaItem | null>(null);
@@ -57,16 +75,53 @@ export default function MediaIngestTab({
 
   const handleScan = async () => {
     setIsScanning(true);
-    setStatusMessage('Scanning local folder for new cinema files...');
+    setStatusMessage('Scanning media folder: indexing new files & pruning deleted files...');
     try {
       const res = await scanLocalMedia();
-      setStatusMessage(`Scan complete! Found and registered ${res.newFilesCount} new files.`);
+      const parts = [];
+      if (res.newFilesCount > 0) parts.push(`${res.newFilesCount} new file(s) registered`);
+      if (res.prunedCount && res.prunedCount > 0) parts.push(`${res.prunedCount} deleted file(s) removed`);
+      if (res.refreshedCount && res.refreshedCount > 0) parts.push(`${res.refreshedCount} runtime(s) updated`);
+      
+      const summary = parts.length > 0 ? parts.join(', ') : 'All files in sync! No deleted or missing items.';
+      setStatusMessage(`Scan Complete: ${summary}`);
       onRefresh();
     } catch (err: any) {
       setStatusMessage(`Scan failed: ${err.message}`);
     } finally {
       setIsScanning(false);
-      setTimeout(() => setStatusMessage(null), 5000);
+      setTimeout(() => setStatusMessage(null), 6000);
+    }
+  };
+
+  const handleRescanAll = async () => {
+    setIsRefreshingAll(true);
+    setStatusMessage('Probing FFprobe stream metadata for all files in library...');
+    try {
+      const res = await rescanAllMedia();
+      setStatusMessage(`Verification complete! ${res.updatedCount} file(s) verified with exact runtimes, ${res.prunedCount} deleted items purged.`);
+      onRefresh();
+    } catch (err: any) {
+      setStatusMessage(`Metadata verification failed: ${err.message}`);
+    } finally {
+      setIsRefreshingAll(false);
+      setTimeout(() => setStatusMessage(null), 6000);
+    }
+  };
+
+  const handleDeleteMedia = async (id: string, title: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${title}"? This removes it from your theater library and deletes the file from disk.`)) {
+      return;
+    }
+
+    try {
+      await deleteMedia(id);
+      setStatusMessage(`Deleted "${title}" successfully.`);
+      onRefresh();
+    } catch (err: any) {
+      alert(`Could not delete media: ${err.message}`);
+    } finally {
+      setTimeout(() => setStatusMessage(null), 4000);
     }
   };
 
@@ -144,14 +199,26 @@ export default function MediaIngestTab({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Scan local folder button */}
+            {/* Scan local folder & prune button */}
             <button
               onClick={handleScan}
-              disabled={isScanning}
-              className="min-h-[44px] px-4 py-2 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-2xs"
+              disabled={isScanning || isRefreshingAll}
+              className="min-h-[44px] px-4 py-2 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-2xs cursor-pointer"
+              title="Scan folder, discover new media, and prune deleted files"
             >
               <FolderSync className={`w-4 h-4 text-blue-600 ${isScanning ? 'animate-spin' : ''}`} />
-              <span>{isScanning ? 'Scanning Directory...' : 'Scan Local Media Folder'}</span>
+              <span>{isScanning ? 'Syncing...' : 'Scan & Sync Media Folder'}</span>
+            </button>
+
+            {/* Force verify runtimes button */}
+            <button
+              onClick={handleRescanAll}
+              disabled={isScanning || isRefreshingAll}
+              className="min-h-[44px] px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-2xs cursor-pointer"
+              title="Probes all video files with FFprobe to verify and fix exact runtimes"
+            >
+              <Sparkles className={`w-4 h-4 text-emerald-600 ${isRefreshingAll ? 'animate-spin' : ''}`} />
+              <span>{isRefreshingAll ? 'Probing Runtimes...' : 'Verify All Runtimes'}</span>
             </button>
 
             {/* Ingest / Upload File button */}
@@ -165,7 +232,7 @@ export default function MediaIngestTab({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploading}
-              className="min-h-[44px] px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm shadow-blue-600/20 transition-all disabled:opacity-50"
+              className="min-h-[44px] px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               <span>{isUploading ? 'Ingesting Video...' : 'Ingest Local File'}</span>
@@ -365,10 +432,19 @@ export default function MediaIngestTab({
                       {/* Preview button */}
                       <button
                         onClick={() => setPreviewItem(item)}
-                        className="min-h-[36px] min-w-[36px] p-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center transition-colors shadow-2xs"
+                        className="min-h-[36px] min-w-[36px] p-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
                         title="Preview video"
                       >
                         <Eye className="w-4 h-4" />
+                      </button>
+
+                      {/* Delete media button */}
+                      <button
+                        onClick={() => handleDeleteMedia(item.id, item.title)}
+                        className="min-h-[36px] min-w-[36px] p-2 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-300 text-slate-500 hover:text-rose-600 rounded-lg flex items-center justify-center transition-colors shadow-2xs cursor-pointer"
+                        title="Delete from library & disk"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>

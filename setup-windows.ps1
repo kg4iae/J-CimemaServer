@@ -45,6 +45,7 @@ Write-Host "[4/5] Ensuring local media, slides, and SQLite database directories 
 New-Item -ItemType Directory -Force -Path ".\media" | Out-Null
 New-Item -ItemType Directory -Force -Path ".\data" | Out-Null
 New-Item -ItemType Directory -Force -Path ".\public\assets\slides" | Out-Null
+New-Item -ItemType Directory -Force -Path ".\public\assets\audio" | Out-Null
 Write-Host " OK" -ForegroundColor Green
 
 # 5. Install npm dependencies & build

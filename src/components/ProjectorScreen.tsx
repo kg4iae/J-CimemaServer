@@ -3,6 +3,7 @@ import { Volume2, VolumeX, Music, Sparkles } from 'lucide-react';
 import { PlaybackState, Playlist, PlaylistItem, TheaterSettings, Slideshow, SlideshowSlide } from '../types/theater';
 import { fetchPlaylists, fetchSettings, syncPlaybackProgress, fetchSlideshows } from '../services/api';
 import { preshowAudio } from '../services/preshowAudio';
+import { getSpotifyEmbedUrl } from '../utils/spotify';
 
 export default function ProjectorScreen() {
   const [playback, setPlayback] = useState<PlaybackState>({
@@ -262,9 +263,45 @@ export default function ProjectorScreen() {
 
       {/* Pre-show audio status monitor in bottom-left */}
       {!isVideoItem && (
-        <div className="absolute bottom-3 left-4 z-40 flex items-center gap-2 text-[11px] text-white/40 font-mono tracking-wider opacity-40 hover:opacity-100 transition-opacity pointer-events-none">
+        <div className="absolute bottom-3 left-4 z-40 flex items-center gap-2 text-[11px] text-white/50 font-mono tracking-wider opacity-60 hover:opacity-100 transition-opacity pointer-events-none">
           <Music className="w-3.5 h-3.5 text-cyan-400" />
-          <span>WALK-IN AUDIO: {playback.spotifyPlaying ? (isAutoplayBlocked ? 'MUTED (CLICK TO UNMUTE)' : 'ACTIVE') : 'PAUSED'}</span>
+          <span>
+            WALK-IN AUDIO:{' '}
+            {!playback.spotifyPlaying
+              ? 'MUTED / PAUSED'
+              : settings.preshow_music_mode === 'spotify'
+              ? 'SPOTIFY ACTIVE'
+              : settings.preshow_music_mode === 'custom_audio'
+              ? `CUSTOM (${settings.preshow_audio_name || 'AUDIO FILE'})`
+              : settings.preshow_music_mode === 'overture'
+              ? 'GRAND HOLLYWOOD OVERTURE'
+              : settings.preshow_music_mode === 'jazz'
+              ? 'CINEMA JAZZ LOUNGE'
+              : 'RETRO THEATER INTERMISSION'}
+          </span>
+        </div>
+      )}
+
+      {/* Spotify Walk-In Music Player on Projector Screen when Spotify mode is active */}
+      {!isVideoItem && settings.preshow_music_mode === 'spotify' && playback.spotifyPlaying && (
+        <div className="absolute bottom-5 right-5 z-40 w-84 max-w-[90vw] rounded-2xl overflow-hidden shadow-2xl border border-emerald-500/40 bg-black/95 backdrop-blur-md transition-all">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-950/80 border-b border-emerald-500/30 text-[11px] text-emerald-300 font-bold">
+            <span className="flex items-center gap-1.5">
+              <Music className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              Spotify Walk-In Music
+            </span>
+            <span className="text-[10px] text-emerald-400/80 font-mono">HDMI Audio</span>
+          </div>
+          <iframe
+            src={getSpotifyEmbedUrl(settings.spotify_playlist_uri)}
+            width="100%"
+            height="152"
+            frameBorder="0"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="lazy"
+            title="Spotify Pre-Show Walk-In Music"
+            className="rounded-b-2xl"
+          />
         </div>
       )}
 
