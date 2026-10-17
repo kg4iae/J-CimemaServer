@@ -1575,22 +1575,62 @@ app.get('/api/spotify', async (req: Request, res: Response) => {
   });
 });
 
-// Helper to launch Spotify on Windows and initiate playback
+// Helper to launch Spotify on Windows and initiate playlist playback
 function launchAndPlaySpotifyOnWindows(uriOrPlaylist?: string) {
+  const raw = (uriOrPlaylist || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I').trim();
+  const spotifyUri = raw.startsWith('spotify:') ? raw : `spotify:playlist:${raw}`;
+
   if (process.platform === 'win32') {
     try {
-      const raw = (uriOrPlaylist || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I').trim();
-      const spotifyUri = raw.startsWith('spotify:') ? raw : `spotify:playlist:${raw}`;
       const psScript = `
-        try {
-          Start-Process "${spotifyUri}"
-          Start-Sleep -Milliseconds 1200
-          $wshell = New-Object -ComObject WScript.Shell
-          $wshell.AppActivate('Spotify')
+        $ErrorActionPreference = 'SilentlyContinue'
+        $spotifyUri = '${spotifyUri}'
+
+        # 1. Launch Spotify directly with the target playlist URI
+        Start-Process $spotifyUri
+
+        # 2. Wait for Spotify process to be ready with a window handle
+        $timeout = 8
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $proc = $null
+        while ($sw.Elapsed.TotalSeconds -lt $timeout) {
           Start-Sleep -Milliseconds 400
-          $wshell.SendKeys([char]179)
-        } catch {}
+          $candidates = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }
+          if ($candidates) {
+            $proc = $candidates | Select-Object -First 1
+            break
+          }
+        }
+
+        # 3. Focus Spotify window by PID and trigger playlist playback
+        if ($proc) {
+          Start-Sleep -Milliseconds 800
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.AppActivate($proc.Id)
+          Start-Sleep -Milliseconds 300
+          # Press Enter to start playing the opened playlist
+          $wshell.SendKeys('{ENTER}')
+          Start-Sleep -Milliseconds 400
+          # Press Space as alternative play trigger
+          $wshell.SendKeys(' ')
+        }
+
+        # 4. Trigger global multimedia Play hardware key (VK_MEDIA_PLAY_PAUSE = 0xB3)
+        Add-Type -TypeDefinition @"
+          using System;
+          using System.Runtime.InteropServices;
+          public class TheaterMediaKey {
+            [DllImport("user32.dll")]
+            public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+            public static void Play() {
+              keybd_event(0xB3, 0, 0, UIntPtr.Zero);
+              keybd_event(0xB3, 0, 2, UIntPtr.Zero);
+            }
+          }
+"@ -ErrorAction SilentlyContinue
+        [TheaterMediaKey]::Play()
       `;
+
       spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
         detached: true,
         stdio: 'ignore',
@@ -1598,6 +1638,14 @@ function launchAndPlaySpotifyOnWindows(uriOrPlaylist?: string) {
     } catch (e) {
       console.warn('Could not launch Spotify on Windows:', e);
     }
+  } else if (process.platform === 'darwin') {
+    try {
+      spawn('open', [spotifyUri], { detached: true, stdio: 'ignore' }).unref();
+    } catch {}
+  } else {
+    try {
+      spawn('xdg-open', [spotifyUri], { detached: true, stdio: 'ignore' }).unref();
+    } catch {}
   }
 }
 

@@ -300,115 +300,94 @@ export default function App() {
 
   return (
     <div className={`theme-pattern-${themePattern} min-h-screen text-slate-800 flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-all duration-300`}>
-      {/* 1. TOP BAR (Bright Frosted White / Slate / Blue / Green Accents) */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-xs px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
-        {/* Zone 1: Wordmark & Live Status Beacon */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center shadow-sm shadow-blue-500/25">
-            <Film className="w-4 h-4" />
-          </div>
-          <div className="flex items-baseline">
-            <span className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap">
-              {settings.theater_name || 'CinemaBooth'}
-            </span>
-            <span className="hidden sm:inline text-xs font-medium text-slate-500 ml-1.5">· Projection Suite</span>
-          </div>
-
-          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 rounded-full text-[11px] font-bold text-emerald-700 ml-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>ONLINE</span>
-          </div>
-        </div>
-
-        {/* Zone 2: Navigation Links (Tabs) */}
-        <nav className="hidden lg:flex items-center gap-1 bg-white/90 p-1.5 rounded-2xl border border-slate-200/90 shadow-2xs">
+      {/* SLEEK COMPACT TOP NAVIGATION BAR (Zero bulky banner, maximum workspace) */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/90 shadow-2xs px-3 sm:px-6 py-2 flex items-center justify-between gap-3">
+        {/* Navigation Tabs */}
+        <nav className="flex items-center overflow-x-auto gap-1 py-0.5 scrollbar-none">
           <button
             onClick={() => setActiveTab('deck')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'deck'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Live Deck
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Live Deck</span>
           </button>
           <button
             onClick={() => setActiveTab('playlists')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'playlists'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Playlists
+            <ListMusic className="w-3.5 h-3.5" />
+            <span>Playlists</span>
           </button>
           <button
             onClick={() => setActiveTab('media')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'media'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Media Ingest
+            <HardDrive className="w-3.5 h-3.5" />
+            <span>Media Ingest</span>
           </button>
           <button
             onClick={() => setActiveTab('slideshows')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'slideshows'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Pre-Show Slides
+            <Presentation className="w-3.5 h-3.5" />
+            <span>Pre-Show Slides</span>
           </button>
           <button
             onClick={() => setActiveTab('cues')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'cues'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Automation Cues
+            <Zap className="w-3.5 h-3.5" />
+            <span>Automation Cues</span>
           </button>
           <button
             onClick={() => setActiveTab('spotify')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'spotify'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Spotify Audio
+            <Music className="w-3.5 h-3.5" />
+            <span>Spotify Audio</span>
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap ${
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'settings'
                 ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                 : 'text-slate-600 hover:text-blue-700 hover:bg-blue-50/70'
             }`}
           >
-            Settings
+            <SettingsIcon className="w-3.5 h-3.5" />
+            <span>Setup</span>
           </button>
         </nav>
 
-        {/* Zone 3: Primary Actions (Pattern Switcher, Phone QR, Projector Window) */}
+        {/* Quick Utilities: Phone QR & Projector Window */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Background Pattern Switcher */}
-          <button
-            onClick={cycleThemePattern}
-            className="min-h-[40px] px-3 py-1.5 bg-blue-50/90 hover:bg-blue-100/90 active:scale-95 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
-            title={`Active Pattern: ${themePattern}. Click to cycle Blue/White/Gray/Green patterns!`}
-          >
-            <Palette className="w-4 h-4 text-blue-600" />
-            <span className="hidden sm:inline capitalize">Pattern: {themePattern}</span>
-          </button>
-
           <button
             onClick={() => setShowQrModal(true)}
-            className="min-h-[40px] px-3 py-1.5 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 border border-slate-200/90 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"
+            className="min-h-[38px] px-3 py-1.5 bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 border border-slate-200/90 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
             title="Open Remote on Phone or Tablet"
           >
             <QrCode className="w-4 h-4 text-blue-600" />
@@ -419,7 +398,7 @@ export default function App() {
             href={projectorUrl}
             target="_blank"
             rel="noreferrer"
-            className="min-h-[40px] px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-emerald-600/25 transition-all whitespace-nowrap"
+            className="min-h-[38px] px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm shadow-emerald-600/25 transition-all whitespace-nowrap"
             title="Launch clean zero-interface projector screen window"
           >
             <Maximize2 className="w-4 h-4" />
@@ -575,6 +554,12 @@ export default function App() {
           <SettingsTab
             settings={settings}
             status={status}
+            themePattern={themePattern}
+            onCyclePattern={cycleThemePattern}
+            onSelectPattern={(pat) => {
+              setThemePattern(pat);
+              localStorage.setItem('cinema_theme_pattern', pat);
+            }}
             onRefreshSettings={loadAllData}
           />
         )}

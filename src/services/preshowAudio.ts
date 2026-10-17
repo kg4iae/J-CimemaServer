@@ -126,9 +126,16 @@ class PreshowAudioEngine {
   }) {
     this.targetVolume = typeof params.volume === 'number' ? params.volume : 0.8;
     this.isMuted = !!params.isMuted;
-    this.currentMode = params.preshowMusicMode || this.currentMode || 'spotify';
+    const mode = params.preshowMusicMode || this.currentMode || 'spotify';
+    this.currentMode = mode;
     if (params.customAudioUrl) {
       this.customAudioUrl = params.customAudioUrl;
+    }
+
+    // If mode is Spotify or None/Silent, stop internal audio engine immediately and do NOT play anything
+    if (mode === 'spotify' || mode === 'none' || mode === 'silent') {
+      this.stop();
+      return;
     }
 
     // Pre-show audio should play ONLY when the presentation video is NOT active
@@ -136,12 +143,6 @@ class PreshowAudioEngine {
     const shouldPlay = !params.isPlaylistPlaying && params.spotifyPlaying;
 
     if (!shouldPlay) {
-      this.stop();
-      return;
-    }
-
-    // If mode is Spotify or None/Silent, stop internal audio engine immediately!
-    if (this.currentMode === 'spotify' || this.currentMode === 'none' || this.currentMode === 'silent') {
       this.stop();
       return;
     }

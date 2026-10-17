@@ -1,17 +1,55 @@
 import React, { useState, useRef } from 'react';
-import { Settings, Upload, Image as ImageIcon, Check, Monitor, Database, Terminal, Shield, Copy, DownloadCloud } from 'lucide-react';
+import { Settings, Upload, Image as ImageIcon, Check, Monitor, Database, Terminal, Shield, Copy, DownloadCloud, Palette, Sparkles } from 'lucide-react';
 import { TheaterSettings, SystemStatus } from '../types/theater';
 import { saveSettings, uploadLogo } from '../services/api';
+
+const PATTERN_OPTIONS: Array<{
+  id: 'projector' | 'blueprint' | 'waves' | 'geometric';
+  title: string;
+  desc: string;
+  badge: string;
+}> = [
+  {
+    id: 'projector',
+    title: 'Projector Optics',
+    desc: 'Subtle cinema light beam with micro film perforation grid',
+    badge: 'Cinema Default',
+  },
+  {
+    id: 'blueprint',
+    title: 'Booth Blueprint',
+    desc: 'Precision architectural blueprint grid with emerald glow',
+    badge: 'Technical',
+  },
+  {
+    id: 'waves',
+    title: 'Modern Waves',
+    desc: 'Acoustic audio wave dynamics and clean light refraction',
+    badge: 'Acoustic',
+  },
+  {
+    id: 'geometric',
+    title: 'Geometric Hex',
+    desc: 'Faceted diamond & geometric cinema theater lattice',
+    badge: 'Modern',
+  },
+];
 
 interface SettingsTabProps {
   settings: TheaterSettings;
   status: SystemStatus | null;
+  themePattern?: 'projector' | 'blueprint' | 'waves' | 'geometric';
+  onCyclePattern?: () => void;
+  onSelectPattern?: (pattern: 'projector' | 'blueprint' | 'waves' | 'geometric') => void;
   onRefreshSettings: () => void;
 }
 
 export default function SettingsTab({
   settings,
   status,
+  themePattern = 'projector',
+  onCyclePattern,
+  onSelectPattern,
   onRefreshSettings,
 }: SettingsTabProps) {
   const [theaterName, setTheaterName] = useState(settings.theater_name || 'Grand Majestic Cinema');
@@ -56,6 +94,77 @@ export default function SettingsTab({
 
   return (
     <div className="space-y-6">
+      {/* 0. BACKGROUND CHANGER BADGE & THEME PATTERN CARD (Setup Screen) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Palette className="w-5 h-5 text-blue-600" />
+              Interface Atmosphere &amp; Background Pattern
+            </h3>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Choose the backdrop visual pattern for your projection booth operator console.
+            </p>
+          </div>
+
+          {/* Background Changer Badge "Pattern" */}
+          <button
+            type="button"
+            onClick={onCyclePattern}
+            className="min-h-[42px] px-4 py-2 bg-blue-50/90 hover:bg-blue-100/90 active:scale-95 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-2xs cursor-pointer"
+            title={`Active Pattern: ${themePattern}. Click to cycle background pattern!`}
+          >
+            <Palette className="w-4 h-4 text-blue-600" />
+            <span className="capitalize font-extrabold text-sm">Pattern: {themePattern}</span>
+            <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full ml-1 font-mono uppercase">
+              Cycle
+            </span>
+          </button>
+        </div>
+
+        {/* Interactive Pattern Selection Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+          {PATTERN_OPTIONS.map((opt) => {
+            const isSelected = themePattern === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => onSelectPattern?.(opt.id)}
+                className={`p-4 rounded-xl border text-left transition-all cursor-pointer relative ${
+                  isSelected
+                    ? 'bg-blue-50/90 border-blue-500 ring-2 ring-blue-500/30 text-blue-950 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300 text-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-bold text-xs flex items-center gap-1.5">
+                    <Sparkles className={`w-3.5 h-3.5 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
+                    {opt.title}
+                  </span>
+                  {isSelected && (
+                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                  {opt.desc}
+                </p>
+                <div className="mt-2.5 flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-slate-400 uppercase">
+                    {opt.badge}
+                  </span>
+                  {isSelected && (
+                    <span className="text-[10px] font-bold text-blue-700 bg-white border border-blue-200 px-2 py-0.5 rounded-md">
+                      Active
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* 1. PROJECTOR LOGO UPLOADER (Bright White / Slate / Blue / Green) */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-200">

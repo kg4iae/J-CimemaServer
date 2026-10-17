@@ -26,6 +26,7 @@ export default function ProjectorScreen() {
     logo_url: '/assets/theater_logo.svg',
     active_slideshow_id: 'ss_general_preshow',
     preshow_display_mode: 'slideshow',
+    preshow_music_mode: 'spotify',
   });
 
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -155,6 +156,9 @@ export default function ProjectorScreen() {
         } else if (payload.type === 'SLIDESHOWS_UPDATED') {
           fetchSlideshows().then(setSlideshows).catch(console.error);
         } else if (payload.type === 'SETTINGS_UPDATED' || payload.type === 'LOGO_UPDATED') {
+          if (payload.data) {
+            setSettings((prev) => ({ ...prev, ...payload.data }));
+          }
           fetchSettings().then(setSettings).catch(console.error);
         } else if (payload.type === 'PLAYLISTS_UPDATED') {
           fetchPlaylists().then(setPlaylists).catch(console.error);

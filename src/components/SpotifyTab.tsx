@@ -155,10 +155,8 @@ export default function SpotifyTab({
       if (mode === 'spotify') {
         const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
         await controlSpotify('launch', info.title, info.artist, cleanUri);
-        try {
-          window.location.href = cleanUri;
-        } catch {}
-        setSavedMessage('Spotify Integration Active: Opening and playing playlist in Spotify');
+        triggerSpotifyAppOpen(cleanUri);
+        setSavedMessage('Spotify Integration Active: Opening and playing playlist in Spotify desktop app.');
       } else {
         await controlSpotify(spotifyPlaying ? 'play' : 'pause', info.title, info.artist);
         preshowAudio.syncState({
@@ -178,6 +176,21 @@ export default function SpotifyTab({
       alert(`Error saving audio mode: ${e.message}`);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const triggerSpotifyAppOpen = (uri: string) => {
+    try {
+      const a = document.createElement('a');
+      a.href = uri;
+      a.target = '_self';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      try {
+        window.location.href = uri;
+      } catch {}
     }
   };
 
@@ -209,9 +222,7 @@ export default function SpotifyTab({
       const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
       if (nextAction === 'play') {
         await controlSpotify('launch', info.title, info.artist, cleanUri);
-        try {
-          window.location.href = cleanUri;
-        } catch {}
+        triggerSpotifyAppOpen(cleanUri);
       } else {
         await controlSpotify('pause', info.title, info.artist);
       }
@@ -225,9 +236,7 @@ export default function SpotifyTab({
       preshowAudio.stop();
       const cleanUri = playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`;
       await controlSpotify('launch', 'Spotify Walk-In Playlist', 'Spotify App', cleanUri);
-      try {
-        window.location.href = cleanUri;
-      } catch {}
+      triggerSpotifyAppOpen(cleanUri);
       setSavedMessage('Spotify Opened: Playing playlist in Spotify desktop app.');
       setTimeout(() => setSavedMessage(null), 5000);
       onRefreshSettings();
@@ -524,17 +533,39 @@ export default function SpotifyTab({
                 </div>
               </div>
 
-              {/* Primary Action Button: Open & Play in Spotify App */}
-              <button
-                type="button"
-                onClick={handleLaunchSpotify}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/25 active:scale-95 transition-all cursor-pointer"
-                title="Launch Spotify and start playback on host machine"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>Open &amp; Play in Spotify App</span>
-                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-              </button>
+              {/* Primary Action Buttons: Open & Play in Spotify App and Web Player */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleLaunchSpotify}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/25 active:scale-95 transition-all cursor-pointer"
+                  title="Launch Spotify and start playback on host machine"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Open &amp; Play in Spotify App</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                </button>
+
+                <a
+                  href={playlistUri.startsWith('spotify:') ? playlistUri : `spotify:playlist:${playlistUri}`}
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold text-xs flex items-center gap-1.5 border border-slate-700 transition-all"
+                  title="Direct desktop URI link to open installed Spotify"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Direct App URI</span>
+                </a>
+
+                <a
+                  href={getSpotifyWebUrl(playlistUri)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 transition-all"
+                  title="Open this playlist in Spotify Web Player"
+                >
+                  <span>Web Player</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-60" />
+                </a>
+              </div>
             </div>
 
             <div className="p-3.5 bg-slate-800/60 rounded-xl border border-slate-700/60 text-xs text-slate-300 flex items-start gap-3">
