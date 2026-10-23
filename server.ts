@@ -3,12 +3,41 @@ import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { spawn } from 'node:child_process';
+import { spawn, SpawnOptions, ChildProcess } from 'node:child_process';
 import cors from 'cors';
 import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { getDatabase, saveDatabase } from './server/database.ts';
 import { extractMediaMetadata } from './server/mediaMetadata.ts';
+import { buildProjectorDebPackage } from './server/debBuilder.ts';
+
+// Prevent unhandled child-process or stream errors from crashing the server process
+process.on('uncaughtException', (err) => {
+  console.warn('[CinemaBooth] Caught unexpected exception (server kept alive):', err?.message || err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.warn('[CinemaBooth] Caught unhandled promise rejection (server kept alive):', reason);
+});
+
+// Safe wrapper around spawn() that always attaches an 'error' listener so missing OS binaries (e.g. pactl, xdg-open, powershell) never crash Node
+function safeSpawn(command: string, args: string[] = [], options: SpawnOptions = {}): ChildProcess | null {
+  try {
+    const child = spawn(command, args, options);
+    child.on('error', (err) => {
+      // Silently ignore missing optional OS utilities (e.g. pactl/xdg-open in headless containers)
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`[safeSpawn] Process '${command}' error:`, err.message);
+      }
+    });
+    if (options.detached) {
+      child.unref();
+    }
+    return child;
+  } catch (err) {
+    return null;
+  }
+}
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -110,6 +139,10 @@ app.get('/media/:filename', (req: Request, res: Response): void => {
     const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
     const chunksize = end - start + 1;
     const file = fs.createReadStream(filePath, { start, end });
+    file.on('error', (err) => {
+      console.warn('Media stream read error:', err.message);
+      if (!res.headersSent) res.status(500).end();
+    });
     const head = {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
@@ -124,7 +157,12 @@ app.get('/media/:filename', (req: Request, res: Response): void => {
       'Content-Type': mimeType,
     };
     res.writeHead(200, head);
-    fs.createReadStream(filePath).pipe(res);
+    const file = fs.createReadStream(filePath);
+    file.on('error', (err) => {
+      console.warn('Media stream read error:', err.message);
+      if (!res.headersSent) res.status(500).end();
+    });
+    file.pipe(res);
   }
 });
 
@@ -170,6 +208,21 @@ app.post('/api/preshow/audio/upload', upload.single('audio'), async (req: Reques
 app.use('/assets', express.static(path.resolve(process.cwd(), 'public/assets')));
 
 // In-memory runtime state synced with SQLite
+interface ApplianceRuntimeStatus {
+  connected: boolean;
+  hostname: string;
+  ip: string;
+  arch: string;
+  audioProfile: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  librespotRunning: boolean;
+  kioskRunning: boolean;
+  micMuted: boolean;
+  spotifyVolume: number;
+  uptime: number;
+  lastSeen: number;
+  webScreensConnected: number;
+}
+
 interface RuntimePlaybackState {
   currentPlaylistId: string;
   currentItemIndex: number;
@@ -179,6 +232,9 @@ interface RuntimePlaybackState {
   volume: number;
   isMuted: boolean;
   spotifyPlaying: boolean;
+  spotifyVolume: number;
+  spotifyConnected: boolean;
+  spotifyDeviceName: string;
   spotifyTrack: string;
   spotifyArtist: string;
   activeCue: string | null;
@@ -186,8 +242,12 @@ interface RuntimePlaybackState {
   karaokeActive: boolean;
   karaokeCode: string;
   micMuted: boolean;
+  applianceStatus: ApplianceRuntimeStatus;
   lastAction: string;
 }
+
+const pendingApplianceCommands: Array<{ action: string; [key: string]: any }> = [];
+const connectedWebScreens = new Set<WebSocket>();
 
 const playbackState: RuntimePlaybackState = {
   currentPlaylistId: 'pl_feature_night',
@@ -198,13 +258,30 @@ const playbackState: RuntimePlaybackState = {
   volume: 1.0,
   isMuted: false,
   spotifyPlaying: true,
-  spotifyTrack: 'Cinema Paradiso Overture (Ambient Walk-in)',
-  spotifyArtist: 'Grand Cinema Ensemble',
+  spotifyVolume: 0.8,
+  spotifyConnected: false,
+  spotifyDeviceName: 'CinemaBooth Projector',
+  spotifyTrack: 'Spotify Connect Ready (Select from Phone)',
+  spotifyArtist: 'Projector Screen Audio',
   activeCue: null,
   activeSlideshowId: 'ss_general_preshow',
   karaokeActive: false,
   karaokeCode: '',
   micMuted: false,
+  applianceStatus: {
+    connected: false,
+    hostname: 'Not Connected',
+    ip: '-',
+    arch: 'amd64',
+    audioProfile: 'optical-51-ac3',
+    librespotRunning: false,
+    kioskRunning: false,
+    micMuted: true,
+    spotifyVolume: 80,
+    uptime: 0,
+    lastSeen: 0,
+    webScreensConnected: 0,
+  },
   lastAction: 'init',
 };
 
@@ -228,7 +305,11 @@ wss.on('connection', (ws) => {
   ws.on('message', async (raw) => {
     try {
       const parsed = JSON.parse(raw.toString());
-      if (parsed.type === 'SYNC_TIME') {
+      if (parsed.type === 'REGISTER_SCREEN') {
+        connectedWebScreens.add(ws);
+        playbackState.applianceStatus.webScreensConnected = connectedWebScreens.size;
+        broadcast('APPLIANCE_STATE', playbackState.applianceStatus);
+      } else if (parsed.type === 'SYNC_TIME') {
         playbackState.currentTime = parsed.data.currentTime;
         playbackState.duration = parsed.data.duration;
         broadcast('TIME_UPDATE', {
@@ -240,6 +321,14 @@ wss.on('connection', (ws) => {
       }
     } catch (e) {
       // ignore invalid message
+    }
+  });
+
+  ws.on('close', () => {
+    if (connectedWebScreens.has(ws)) {
+      connectedWebScreens.delete(ws);
+      playbackState.applianceStatus.webScreensConnected = connectedWebScreens.size;
+      broadcast('APPLIANCE_STATE', playbackState.applianceStatus);
     }
   });
 });
@@ -460,6 +549,15 @@ async function handlePlaylistEnd() {
 // System Status
 app.get('/api/status', (req: Request, res: Response) => {
   const localIps = getLocalIpAddresses();
+  // Mark native appliance disconnected if no heartbeat in last 15 seconds
+  if (
+    playbackState.applianceStatus.connected &&
+    Date.now() - playbackState.applianceStatus.lastSeen > 15000
+  ) {
+    playbackState.applianceStatus.connected = false;
+  }
+  playbackState.applianceStatus.webScreensConnected = connectedWebScreens.size;
+
   res.json({
     status: 'online',
     platform: process.platform,
@@ -470,7 +568,111 @@ app.get('/api/status', (req: Request, res: Response) => {
     mediaDir: MEDIA_DIR,
     remoteUrl: localIps.length ? `http://${localIps[0]}:${PORT}` : `http://localhost:${PORT}`,
     projectorUrl: localIps.length ? `http://${localIps[0]}:${PORT}/?mode=screen` : `http://localhost:${PORT}/?mode=screen`,
+    applianceStatus: playbackState.applianceStatus,
   });
+});
+
+// Downloadable Debian (.deb) Package for the Linux x86_64 Mini PC Projector Appliance
+app.get('/api/appliance/deb', async (req: Request, res: Response) => {
+  try {
+    const db = await getDatabase();
+    const sRes = db.exec('SELECT key, value FROM settings');
+    const settingsMap: Record<string, string> = {};
+    if (sRes[0]?.values) {
+      sRes[0].values.forEach(([k, v]) => {
+        settingsMap[String(k)] = String(v || '');
+      });
+    }
+
+    const localIps = getLocalIpAddresses();
+    const defaultServerUrl = localIps.length
+      ? `http://${localIps[0]}:${PORT}`
+      : `${req.protocol}://${req.get('host')}`;
+
+    const serverUrl = String(req.query.server || settingsMap.appliance_server_url || defaultServerUrl);
+    const audioProfile = (String(req.query.audio || settingsMap.appliance_audio_output || 'optical-51-ac3') as
+      | 'optical-51-ac3'
+      | 'hdmi-51-pcm'
+      | 'stereo-20');
+    const spdifCard = String(req.query.card || settingsMap.appliance_spdif_card || '0');
+    const resolution = String(req.query.resolution || settingsMap.appliance_resolution || 'auto');
+    const deviceName = String(settingsMap.spotify_device_name || 'CinemaBooth Projector');
+    const theaterName = String(settingsMap.theater_name || 'Grand Majestic Cinema');
+
+    const debBuffer = buildProjectorDebPackage({
+      serverUrl,
+      deviceName,
+      audioProfile,
+      spdifCard,
+      resolution,
+      theaterName,
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.debian.binary-package');
+    res.setHeader('Content-Disposition', 'attachment; filename="cinemabooth-projector_1.0.0_amd64.deb"');
+    res.setHeader('Content-Length', debBuffer.length);
+    res.send(debBuffer);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Heartbeat endpoint for the native Linux Mini PC agent (cinemabooth-agent.service)
+app.post('/api/appliance/heartbeat', (req: Request, res: Response) => {
+  const { hostname, ip, arch, audioProfile, librespotRunning, kioskRunning, micMuted, spotifyVolume, uptime } = req.body || {};
+  playbackState.applianceStatus = {
+    connected: true,
+    hostname: String(hostname || 'cinemabooth-mini-pc'),
+    ip: String(ip || req.ip || '127.0.0.1'),
+    arch: String(arch || 'amd64'),
+    audioProfile: audioProfile || 'optical-51-ac3',
+    librespotRunning: Boolean(librespotRunning),
+    kioskRunning: Boolean(kioskRunning),
+    micMuted: typeof micMuted === 'boolean' ? micMuted : playbackState.micMuted,
+    spotifyVolume: typeof spotifyVolume === 'number' ? spotifyVolume : Math.round(playbackState.spotifyVolume * 100),
+    uptime: Number(uptime) || 0,
+    lastSeen: Date.now(),
+    webScreensConnected: connectedWebScreens.size,
+  };
+
+  if (librespotRunning) {
+    playbackState.spotifyConnected = true;
+  }
+
+  broadcast('APPLIANCE_STATE', playbackState.applianceStatus);
+
+  const commands = pendingApplianceCommands.splice(0, pendingApplianceCommands.length);
+  res.json({
+    success: true,
+    commands,
+    state: {
+      isPlaying: playbackState.isPlaying,
+      spotifyPlaying: playbackState.spotifyPlaying,
+      spotifyVolume: playbackState.spotifyVolume,
+      karaokeActive: playbackState.karaokeActive,
+      micMuted: playbackState.micMuted,
+    },
+  });
+});
+
+// Remote control & 5.1 Surround Speaker Test endpoint (works for BOTH Web Browser Screen and Native Linux Appliance)
+app.post('/api/appliance/command', (req: Request, res: Response) => {
+  const { action, channel, volume } = req.body || {};
+  if (!action) {
+    res.status(400).json({ error: 'Action required' });
+    return;
+  }
+
+  if (action === 'speaker_test_51') {
+    // Broadcast 5.1 speaker test to all open Projector Screens (Web Browser & Native Appliance Kiosk)
+    broadcast('SPEAKER_TEST_51', { channel: channel || 'all', timestamp: Date.now() });
+    res.json({ success: true, message: `Triggered 5.1 surround speaker test (${channel || 'all'})` });
+    return;
+  }
+
+  pendingApplianceCommands.push({ action, volume });
+  broadcast('APPLIANCE_CMD', { action, volume });
+  res.json({ success: true, queued: true, action });
 });
 
 // Settings GET & POST
@@ -503,14 +705,26 @@ app.post('/api/settings', async (req: Request, res: Response) => {
     saveDatabase();
     broadcast('SETTINGS_UPDATED', updates);
 
-    // If switching to Spotify mode, launch and play Spotify on Windows immediately
+    if (typeof updates.spotify_device_name === 'string' && updates.spotify_device_name.trim()) {
+      playbackState.spotifyDeviceName = updates.spotify_device_name.trim();
+    }
+    if (typeof updates.spotify_volume !== 'undefined') {
+      const vol = parseFloat(String(updates.spotify_volume));
+      if (!isNaN(vol)) {
+        playbackState.spotifyVolume = Math.max(0, Math.min(1, vol));
+      }
+    }
+
     if (updates.preshow_music_mode === 'spotify') {
-      const uri = updates.spotify_playlist_uri || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I';
-      launchAndPlaySpotifyOnWindows(uri);
       playbackState.spotifyPlaying = true;
-      playbackState.spotifyTrack = 'Spotify Pre-Show Playlist';
-      playbackState.spotifyArtist = 'Spotify Desktop App';
-      broadcast('SPOTIFY_STATE', { isPlaying: true, track: playbackState.spotifyTrack, artist: playbackState.spotifyArtist });
+      broadcast('SPOTIFY_STATE', {
+        isPlaying: true,
+        volume: playbackState.spotifyVolume,
+        connected: playbackState.spotifyConnected,
+        deviceName: playbackState.spotifyDeviceName,
+        track: playbackState.spotifyTrack,
+        artist: playbackState.spotifyArtist,
+      });
     }
 
     res.json({ success: true, settings: updates });
@@ -759,7 +973,7 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
 
     const db = await getDatabase();
     db.run(`
-      INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+      INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, audio_channels, audio_layout, is_compatible, conversion_status, conversion_progress, created_at)
       VALUES (
         '${sqlEscape(id)}',
         '${sqlEscape(cleanTitle)}',
@@ -770,6 +984,8 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
         ${meta.duration},
         '${sqlEscape(meta.resolution)}',
         '${sqlEscape(meta.format)}',
+        ${meta.audioChannels || 2},
+        '${sqlEscape(meta.audioLayout || '2.0 Stereo')}',
         ${meta.isCompatible ? 1 : 0},
         '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
         ${meta.isCompatible ? 100 : 0},
@@ -788,6 +1004,8 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
         duration: meta.duration,
         resolution: meta.resolution,
         format: meta.format,
+        audio_channels: meta.audioChannels,
+        audio_layout: meta.audioLayout,
         isCompatible: meta.isCompatible,
       },
     });
@@ -800,13 +1018,14 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
 app.post('/api/media/scan', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
+    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
     const db = await getDatabase();
     
     // 1. Prune database records for files that were deleted from disk
     const existing = db.exec('SELECT id, filename, duration, resolution, file_size FROM media_items');
     let prunedCount = 0;
     let refreshedCount = 0;
+    const failedFiles: { filename: string; error: string }[] = [];
     const existingMap = new Map<string, { id: string; duration: number; resolution: string; file_size: number }>();
 
     if (existing[0]?.values) {
@@ -851,7 +1070,7 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
           const title = path.parse(filename).name;
 
           db.run(`
-            INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+            INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, audio_channels, audio_layout, is_compatible, conversion_status, conversion_progress, created_at)
             VALUES (
               '${sqlEscape(id)}',
               '${sqlEscape(title)}',
@@ -862,6 +1081,8 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
               ${meta.duration},
               '${sqlEscape(meta.resolution)}',
               '${sqlEscape(meta.format)}',
+              ${meta.audioChannels || 2},
+              '${sqlEscape(meta.audioLayout || '2.0 Stereo')}',
               ${meta.isCompatible ? 1 : 0},
               '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
               ${meta.isCompatible ? 100 : 0},
@@ -885,6 +1106,8 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
                   resolution = '${sqlEscape(meta.resolution)}',
                   file_size = ${meta.fileSize || stat.size},
                   format = '${sqlEscape(meta.format)}',
+                  audio_channels = ${meta.audioChannels || 2},
+                  audio_layout = '${sqlEscape(meta.audioLayout || '2.0 Stereo')}',
                   file_path = '${sqlEscape(publicFilePath)}',
                   is_compatible = ${meta.isCompatible ? 1 : 0}
               WHERE id = '${sqlEscape(current.id)}'
@@ -898,8 +1121,9 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
             refreshedCount++;
           }
         }
-      } catch (fileErr) {
+      } catch (fileErr: any) {
         console.warn(`Error scanning media file "${filename}":`, fileErr);
+        failedFiles.push({ filename, error: fileErr?.message || String(fileErr) });
       }
     }
 
@@ -916,6 +1140,7 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
       newFilesCount: scannedCount,
       prunedCount,
       refreshedCount,
+      failedFiles,
       totalFiles: files.length,
       message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.`,
     });
@@ -928,7 +1153,7 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
 app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
+    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
     const db = await getDatabase();
     
     // 1. Purge missing records
@@ -1099,15 +1324,20 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
 
     res.json({ success: true, message: 'Conversion started' });
 
-    // Handle FFmpeg or internal converter with continuous progress reporting
+    // Handle FFmpeg or internal converter with continuous progress reporting (preserves 5.1 6-channel surround when present)
     if (ffmpegAvailable && fs.existsSync(inputPath)) {
+      const meta = await extractMediaMetadata(inputPath);
+      const isSurround51 = (meta.audioChannels || 2) >= 6;
+      const audioArgs = isSurround51
+        ? ['-c:a', 'aac', '-b:a', '384k', '-ac', '6']
+        : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2'];
+
       const proc = spawn('ffmpeg', [
         '-i', inputPath,
         '-c:v', 'libx264',
         '-preset', 'fast',
         '-crf', '22',
-        '-c:a', 'aac',
-        '-b:a', '192k',
+        ...audioArgs,
         '-movflags', '+faststart',
         '-y',
         outputPath,
@@ -1118,6 +1348,15 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
         simProgress = Math.min(simProgress + 15, 95);
         broadcast('INGESTION_PROGRESS', { id, progress: simProgress, status: 'converting' });
       }, 500);
+
+      proc.on('error', async (err) => {
+        clearInterval(progressTimer);
+        console.warn('FFmpeg process error:', err.message);
+        const updatedDb = await getDatabase();
+        updatedDb.run(`UPDATE media_items SET conversion_status = 'failed', conversion_progress = 100 WHERE id = '${sqlEscape(id)}'`);
+        saveDatabase();
+        broadcast('INGESTION_PROGRESS', { id, progress: 100, status: 'failed' });
+      });
 
       proc.on('close', async (code) => {
         clearInterval(progressTimer);
@@ -1214,6 +1453,14 @@ app.post('/api/media/ytdlp', async (req: Request, res: Response): Promise<void> 
       url,
     ]);
 
+    proc.on('error', async (err) => {
+      console.warn('yt-dlp process error:', err.message);
+      const updatedDb = await getDatabase();
+      updatedDb.run(`UPDATE media_items SET conversion_status = 'failed', conversion_progress = 100 WHERE id = '${sqlEscape(id)}'`);
+      saveDatabase();
+      broadcast('INGESTION_PROGRESS', { id, progress: 100, status: 'failed' });
+    });
+
     proc.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       const match = text.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
@@ -1235,7 +1482,7 @@ app.post('/api/media/ytdlp', async (req: Request, res: Response): Promise<void> 
         SET conversion_status = '${success ? 'ready' : 'failed'}',
             conversion_progress = 100,
             file_size = ${size}
-        WHERE id = '${id}'
+        WHERE id = '${sqlEscape(id)}'
       `);
       saveDatabase();
       broadcast('INGESTION_PROGRESS', { id, progress: 100, status: success ? 'ready' : 'failed', filePath: `/media/${filename}` });
@@ -1588,7 +1835,100 @@ app.post('/api/cues/test', async (req: Request, res: Response) => {
   }
 });
 
-// Spotify Integration
+// Spotify Headless Projector Integration (Web Playback SDK + Spotify Connect Web API)
+async function getValidSpotifyAccessToken(): Promise<{
+  accessToken: string;
+  deviceName: string;
+  clientId: string;
+}> {
+  const db = await getDatabase();
+  const res = db.exec(
+    "SELECT key, value FROM settings WHERE key IN ('spotify_client_id', 'spotify_access_token', 'spotify_refresh_token', 'spotify_token_expires_at', 'spotify_device_name')"
+  );
+  const map: Record<string, string> = {};
+  if (res[0]?.values) {
+    res[0].values.forEach(([k, v]) => {
+      map[String(k)] = String(v || '');
+    });
+  }
+
+  let accessToken = (map.spotify_access_token || '').trim();
+  const refreshToken = (map.spotify_refresh_token || '').trim();
+  const clientId = (map.spotify_client_id || '').trim();
+  const expiresAt = Number(map.spotify_token_expires_at || '0');
+  const deviceName = (map.spotify_device_name || 'CinemaBooth Projector').trim();
+
+  // Refresh token automatically if expired or expiring within 5 minutes
+  if (refreshToken && clientId && (!accessToken || (expiresAt > 0 && Date.now() > expiresAt - 5 * 60 * 1000))) {
+    try {
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: clientId,
+      });
+      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      if (tokenRes.ok) {
+        const data: any = await tokenRes.json();
+        if (data.access_token) {
+          accessToken = data.access_token;
+          const newExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
+          db.run(`
+            INSERT INTO settings (key, value) VALUES ('spotify_access_token', '${sqlEscape(accessToken)}')
+            ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(accessToken)}'
+          `);
+          db.run(`
+            INSERT INTO settings (key, value) VALUES ('spotify_token_expires_at', '${newExpiresAt}')
+            ON CONFLICT(key) DO UPDATE SET value = '${newExpiresAt}'
+          `);
+          if (data.refresh_token) {
+            db.run(`
+              INSERT INTO settings (key, value) VALUES ('spotify_refresh_token', '${sqlEscape(data.refresh_token)}')
+              ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(data.refresh_token)}'
+            `);
+          }
+          saveDatabase();
+        }
+      }
+    } catch (err) {
+      console.warn('Spotify token refresh warning:', err);
+    }
+  }
+
+  return { accessToken, deviceName, clientId };
+}
+
+// Optional Web API call in case Spotify Connect is targeting librespot/spotifyd or Web Playback SDK
+async function triggerSpotifyWebApi(action: 'play' | 'pause' | 'volume', volumePercent?: number) {
+  try {
+    const { accessToken } = await getValidSpotifyAccessToken();
+    if (!accessToken) return;
+
+    if (action === 'play') {
+      await fetch('https://api.spotify.com/v1/me/player/play', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } else if (action === 'pause') {
+      await fetch('https://api.spotify.com/v1/me/player/pause', {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } else if (action === 'volume' && typeof volumePercent === 'number') {
+      const clamped = Math.max(0, Math.min(100, Math.round(volumePercent)));
+      await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${clamped}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    }
+  } catch {
+    // Ignore network/API errors; ProjectorScreen Web Playback SDK also handles commands directly via WebSocket
+  }
+}
+
 app.get('/api/spotify', async (req: Request, res: Response) => {
   const db = await getDatabase();
   const settingsRes = db.exec("SELECT key, value FROM settings WHERE key LIKE 'spotify_%'");
@@ -1602,144 +1942,195 @@ app.get('/api/spotify', async (req: Request, res: Response) => {
     settings: spotifySettings,
     state: {
       isPlaying: playbackState.spotifyPlaying,
+      volume: playbackState.spotifyVolume,
+      connected: playbackState.spotifyConnected,
+      deviceName: playbackState.spotifyDeviceName,
       track: playbackState.spotifyTrack,
       artist: playbackState.spotifyArtist,
     },
   });
 });
 
-// Helper to launch Spotify on Windows and initiate playlist playback
-function launchAndPlaySpotifyOnWindows(uriOrPlaylist?: string) {
-  const raw = (uriOrPlaylist || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I').trim();
-  const spotifyUri = raw.startsWith('spotify:') ? raw : `spotify:playlist:${raw}`;
-
-  if (process.platform === 'win32') {
-    try {
-      const psScript = `
-        $ErrorActionPreference = 'SilentlyContinue'
-        $spotifyUri = '${spotifyUri}'
-
-        # 1. Launch Spotify directly with the target playlist URI
-        Start-Process $spotifyUri
-
-        # 2. Wait for Spotify process to be ready with a window handle
-        $timeout = 8
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $proc = $null
-        while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-          Start-Sleep -Milliseconds 400
-          $candidates = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }
-          if ($candidates) {
-            $proc = $candidates | Select-Object -First 1
-            break
-          }
-        }
-
-        # 3. Focus Spotify window by PID and trigger playlist playback
-        if ($proc) {
-          Start-Sleep -Milliseconds 800
-          $wshell = New-Object -ComObject WScript.Shell
-          $wshell.AppActivate($proc.Id)
-          Start-Sleep -Milliseconds 300
-          # Press Enter to start playing the opened playlist
-          $wshell.SendKeys('{ENTER}')
-          Start-Sleep -Milliseconds 400
-          # Press Space as alternative play trigger
-          $wshell.SendKeys(' ')
-        }
-
-        # 4. Trigger global multimedia Play hardware key (VK_MEDIA_PLAY_PAUSE = 0xB3)
-        Add-Type -TypeDefinition @"
-          using System;
-          using System.Runtime.InteropServices;
-          public class TheaterMediaKey {
-            [DllImport("user32.dll")]
-            public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-            public static void Play() {
-              keybd_event(0xB3, 0, 0, UIntPtr.Zero);
-              keybd_event(0xB3, 0, 2, UIntPtr.Zero);
-            }
-          }
-"@ -ErrorAction SilentlyContinue
-        [TheaterMediaKey]::Play()
-      `;
-
-      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch (e) {
-      console.warn('Could not launch Spotify on Windows:', e);
-    }
-  } else if (process.platform === 'darwin') {
-    try {
-      spawn('open', [spotifyUri], { detached: true, stdio: 'ignore' }).unref();
-    } catch {}
-  } else {
-    try {
-      spawn('xdg-open', [spotifyUri], { detached: true, stdio: 'ignore' }).unref();
-    } catch {}
+// Endpoint for Projector Screen to fetch valid Spotify Web Playback SDK token
+app.get('/api/spotify/token', async (req: Request, res: Response) => {
+  try {
+    const { accessToken, deviceName, clientId } = await getValidSpotifyAccessToken();
+    res.json({
+      accessToken,
+      deviceName,
+      clientId,
+      hasToken: Boolean(accessToken),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-}
+});
 
-app.post('/api/spotify/action', async (req: Request, res: Response) => {
-  const { action, track, artist, uri } = req.body;
-  const db = await getDatabase();
-  const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
-  const spotifyUri = (uri || uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I') as string;
+// Endpoint to save Spotify token or exchange OAuth PKCE code from Phone/Tablet/Chromebook
+app.post('/api/spotify/token', async (req: Request, res: Response) => {
+  try {
+    const { code, codeVerifier, redirectUri, clientId, accessToken, refreshToken, expiresIn, deviceName } = req.body;
+    const db = await getDatabase();
 
-  if (action === 'launch' || action === 'open') {
-    playbackState.spotifyPlaying = true;
-    playbackState.spotifyTrack = track || 'Spotify Pre-Show Playlist';
-    playbackState.spotifyArtist = artist || 'Spotify Desktop App';
-    launchAndPlaySpotifyOnWindows(spotifyUri);
+    if (typeof clientId === 'string') {
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_client_id', '${sqlEscape(clientId.trim())}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(clientId.trim())}'
+      `);
+    }
+
+    if (typeof deviceName === 'string' && deviceName.trim()) {
+      playbackState.spotifyDeviceName = deviceName.trim();
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_device_name', '${sqlEscape(deviceName.trim())}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(deviceName.trim())}'
+      `);
+    }
+
+    // Exchange PKCE authorization code if provided
+    if (code && codeVerifier && redirectUri && clientId) {
+      const body = new URLSearchParams({
+        client_id: clientId.trim(),
+        grant_type: 'authorization_code',
+        code: String(code),
+        redirect_uri: String(redirectUri),
+        code_verifier: String(codeVerifier),
+      });
+
+      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      const data: any = await tokenRes.json();
+      if (!tokenRes.ok || !data.access_token) {
+        res.status(400).json({
+          error: data.error_description || data.error || 'Failed to exchange Spotify authorization code',
+        });
+        return;
+      }
+
+      const expAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_access_token', '${sqlEscape(data.access_token)}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(data.access_token)}'
+      `);
+      if (data.refresh_token) {
+        db.run(`
+          INSERT INTO settings (key, value) VALUES ('spotify_refresh_token', '${sqlEscape(data.refresh_token)}')
+          ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(data.refresh_token)}'
+        `);
+      }
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_token_expires_at', '${expAt}')
+        ON CONFLICT(key) DO UPDATE SET value = '${expAt}'
+      `);
+      saveDatabase();
+      broadcast('SPOTIFY_TOKEN_UPDATED', { deviceName: playbackState.spotifyDeviceName });
+      res.json({ success: true, connected: true });
+      return;
+    }
+
+    // Direct token save (or disconnect if empty string)
+    if (typeof accessToken === 'string') {
+      const cleanToken = accessToken.trim();
+      const expAt = cleanToken ? Date.now() + (Number(expiresIn) || 3600) * 1000 : 0;
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_access_token', '${sqlEscape(cleanToken)}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(cleanToken)}'
+      `);
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_token_expires_at', '${expAt}')
+        ON CONFLICT(key) DO UPDATE SET value = '${expAt}'
+      `);
+      if (!cleanToken) {
+        playbackState.spotifyConnected = false;
+      }
+    }
+
+    if (typeof refreshToken === 'string') {
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_refresh_token', '${sqlEscape(refreshToken.trim())}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(refreshToken.trim())}'
+      `);
+    }
+
+    saveDatabase();
+    broadcast('SPOTIFY_TOKEN_UPDATED', { deviceName: playbackState.spotifyDeviceName });
     broadcast('SPOTIFY_STATE', {
-      isPlaying: true,
+      isPlaying: playbackState.spotifyPlaying,
+      volume: playbackState.spotifyVolume,
+      connected: playbackState.spotifyConnected,
+      deviceName: playbackState.spotifyDeviceName,
       track: playbackState.spotifyTrack,
       artist: playbackState.spotifyArtist,
     });
-    res.json({ success: true, launched: spotifyUri, isPlaying: true });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/spotify/action', async (req: Request, res: Response) => {
+  const { action, track, artist, volume, connected, deviceName } = req.body;
+  const db = await getDatabase();
+
+  // Status sync sent from Projector Screen's headless Spotify Web Playback SDK
+  if (action === 'status_sync') {
+    if (typeof connected === 'boolean') playbackState.spotifyConnected = connected;
+    if (typeof deviceName === 'string' && deviceName) playbackState.spotifyDeviceName = deviceName;
+    if (typeof track === 'string' && track) playbackState.spotifyTrack = track;
+    if (typeof artist === 'string' && artist) playbackState.spotifyArtist = artist;
+    if (typeof req.body.isPlaying === 'boolean') playbackState.spotifyPlaying = req.body.isPlaying;
+    broadcast('SPOTIFY_STATE', {
+      isPlaying: playbackState.spotifyPlaying,
+      volume: playbackState.spotifyVolume,
+      connected: playbackState.spotifyConnected,
+      deviceName: playbackState.spotifyDeviceName,
+      track: playbackState.spotifyTrack,
+      artist: playbackState.spotifyArtist,
+      fromProjector: true,
+    });
+    res.json({ success: true });
     return;
   }
 
-  if (action === 'play') {
+  if (action === 'volume') {
+    if (typeof volume === 'number' && !isNaN(volume)) {
+      playbackState.spotifyVolume = Math.max(0, Math.min(1, volume));
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('spotify_volume', '${playbackState.spotifyVolume.toFixed(2)}')
+        ON CONFLICT(key) DO UPDATE SET value = '${playbackState.spotifyVolume.toFixed(2)}'
+      `);
+      saveDatabase();
+      triggerSpotifyWebApi('volume', playbackState.spotifyVolume * 100);
+    }
+  } else if (action === 'play' || action === 'launch' || action === 'open') {
     playbackState.spotifyPlaying = true;
     if (track) playbackState.spotifyTrack = track;
     if (artist) playbackState.spotifyArtist = artist;
-    
-    const modeRes = db.exec("SELECT value FROM settings WHERE key = 'preshow_music_mode'");
-    const currentMode = modeRes[0]?.values[0]?.[0] || 'spotify';
-    if (currentMode === 'spotify') {
-      launchAndPlaySpotifyOnWindows(spotifyUri);
-    } else if (process.platform === 'win32') {
-      try {
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
-      } catch {}
-    }
+    triggerSpotifyWebApi('play');
   } else if (action === 'pause') {
     playbackState.spotifyPlaying = false;
-    if (process.platform === 'win32') {
-      try {
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
-      } catch {}
-    }
+    triggerSpotifyWebApi('pause');
   } else if (action === 'toggle') {
     playbackState.spotifyPlaying = !playbackState.spotifyPlaying;
-    if (playbackState.spotifyPlaying) {
-      launchAndPlaySpotifyOnWindows(spotifyUri);
-    } else if (process.platform === 'win32') {
-      try {
-        spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
-      } catch {}
-    }
+    triggerSpotifyWebApi(playbackState.spotifyPlaying ? 'play' : 'pause');
   }
 
   broadcast('SPOTIFY_STATE', {
     isPlaying: playbackState.spotifyPlaying,
+    volume: playbackState.spotifyVolume,
+    connected: playbackState.spotifyConnected,
+    deviceName: playbackState.spotifyDeviceName,
     track: playbackState.spotifyTrack,
     artist: playbackState.spotifyArtist,
   });
-  res.json({ success: true, isPlaying: playbackState.spotifyPlaying });
+  res.json({
+    success: true,
+    isPlaying: playbackState.spotifyPlaying,
+    volume: playbackState.spotifyVolume,
+  });
 });
 
 // Master Playback Controls
@@ -1756,17 +2147,20 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
       playbackState.isPlaying = true;
       playbackState.lastAction = 'play';
 
-      // Auto pause Spotify when movie event begins!
+      // Auto pause Spotify on Projector Screen when movie event begins!
       const autoPauseRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_auto_pause'");
       const autoPause = autoPauseRes[0]?.values[0]?.[0] !== 'false';
       if (autoPause && playbackState.spotifyPlaying) {
         playbackState.spotifyPlaying = false;
-        broadcast('SPOTIFY_STATE', { isPlaying: false, track: playbackState.spotifyTrack });
-        if (process.platform === 'win32') {
-          try {
-            spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
-          } catch {}
-        }
+        triggerSpotifyWebApi('pause');
+        broadcast('SPOTIFY_STATE', {
+          isPlaying: false,
+          volume: playbackState.spotifyVolume,
+          connected: playbackState.spotifyConnected,
+          deviceName: playbackState.spotifyDeviceName,
+          track: playbackState.spotifyTrack,
+          artist: playbackState.spotifyArtist,
+        });
       }
       break;
     }
@@ -1780,17 +2174,20 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
       playbackState.currentTime = 0;
       playbackState.lastAction = 'stop';
 
-      // Auto resume Spotify when stopped
+      // Auto resume Spotify on Projector Screen when stopped
       const autoResumeRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_auto_resume'");
       const autoResume = autoResumeRes[0]?.values[0]?.[0] !== 'false';
       if (autoResume) {
         playbackState.spotifyPlaying = true;
-        broadcast('SPOTIFY_STATE', { isPlaying: true, track: playbackState.spotifyTrack });
-        if (process.platform === 'win32') {
-          try {
-            spawn('powershell', ['-WindowStyle', 'Hidden', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]179)']);
-          } catch {}
-        }
+        triggerSpotifyWebApi('play');
+        broadcast('SPOTIFY_STATE', {
+          isPlaying: true,
+          volume: playbackState.spotifyVolume,
+          connected: playbackState.spotifyConnected,
+          deviceName: playbackState.spotifyDeviceName,
+          track: playbackState.spotifyTrack,
+          artist: playbackState.spotifyArtist,
+        });
       }
       break;
     }
@@ -1844,157 +2241,6 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
   res.json({ success: true, playbackState });
 });
 
-// Helper to safely pause/stop Spotify on Windows without accidentally toggling it on
-function pauseSpotifyOnWindows() {
-  if (process.platform === 'win32') {
-    try {
-      const psScript = `
-        $ErrorActionPreference = 'SilentlyContinue'
-        # Check if Spotify has an active window playing (window title contains ' - ' when playing a song)
-        $proc = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
-        if ($proc -and $proc.MainWindowTitle -and ($proc.MainWindowTitle -notmatch '^Spotify')) {
-          $wshell = New-Object -ComObject WScript.Shell
-          $wshell.SendKeys([char]179)
-        } else {
-          # Also send VK_MEDIA_STOP (0xB2) which stops playback without toggling play
-          Add-Type -TypeDefinition @"
-            using System;
-            using System.Runtime.InteropServices;
-            public class TheaterMediaStop {
-              [DllImport("user32.dll")]
-              public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-              public static void Stop() {
-                keybd_event(0xB2, 0, 0, UIntPtr.Zero);
-                keybd_event(0xB2, 0, 2, UIntPtr.Zero);
-              }
-            }
-"@ -ErrorAction SilentlyContinue
-          [TheaterMediaStop]::Stop()
-        }
-      `;
-      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch (e) {
-      console.warn('Could not pause Spotify on Windows:', e);
-    }
-  }
-}
-
-// Helper to mute or unmute the system microphone (Windows CoreAudio capture endpoints + macOS/Linux fallbacks)
-function setSystemMicrophoneMute(mute: boolean) {
-  if (process.platform === 'win32') {
-    try {
-      const muteVal = mute ? '$true' : '$false';
-      const psScript = `
-        $ErrorActionPreference = 'SilentlyContinue'
-        Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-namespace CinemaAudio {
-  [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  interface IAudioEndpointVolume {
-    int RegisterControlChangeNotify(IntPtr pNotify);
-    int UnregisterControlChangeNotify(IntPtr pNotify);
-    int GetChannelCount(out int pnChannelCount);
-    int SetMasterVolumeLevel(float fLevelDB, Guid pguidEventContext);
-    int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
-    int GetMasterVolumeLevel(out float pfLevelDB);
-    int GetMasterVolumeLevelScalar(out float pfLevel);
-    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, Guid pguidEventContext);
-    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, Guid pguidEventContext);
-    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
-    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
-    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, Guid pguidEventContext);
-    int GetMute(out bool pbMute);
-  }
-
-  [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  interface IMMDevice {
-    int Activate(ref Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
-  }
-
-  [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  interface IMMDeviceCollection {
-    int GetCount(out uint pcDevices);
-    int Item(uint nDevice, out IMMDevice ppDevice);
-  }
-
-  [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-  interface IMMDeviceEnumerator {
-    int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IMMDeviceCollection ppDevices);
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-  }
-
-  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-  class MMDeviceEnumeratorComObject { }
-
-  public class MicManager {
-    public static void SetMicMute(bool mute) {
-      var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
-      if (enumerator == null) return;
-      Guid aevGuid = typeof(IAudioEndpointVolume).GUID;
-
-      // 1 = eCapture (microphones/line-in), 1 = DEVICE_STATE_ACTIVE
-      IMMDeviceCollection collection;
-      if (enumerator.EnumAudioEndpoints(1, 1, out collection) == 0 && collection != null) {
-        uint count = 0;
-        collection.GetCount(out count);
-        for (uint i = 0; i < count; i++) {
-          IMMDevice dev;
-          if (collection.Item(i, out dev) == 0 && dev != null) {
-            IAudioEndpointVolume aev;
-            if (dev.Activate(ref aevGuid, 23, 0, out aev) == 0 && aev != null) {
-              aev.SetMute(mute, Guid.Empty);
-            }
-          }
-        }
-      }
-
-      // Also ensure default capture endpoints (roles 0, 1, 2) are muted/unmuted
-      for (int role = 0; role <= 2; role++) {
-        IMMDevice defaultDev;
-        if (enumerator.GetDefaultAudioEndpoint(1, role, out defaultDev) == 0 && defaultDev != null) {
-          IAudioEndpointVolume defaultAev;
-          if (defaultDev.Activate(ref aevGuid, 23, 0, out defaultAev) == 0 && defaultAev != null) {
-            defaultAev.SetMute(mute, Guid.Empty);
-          }
-        }
-      }
-    }
-  }
-}
-"@ -ErrorAction SilentlyContinue
-        [CinemaAudio.MicManager]::SetMicMute(${muteVal})
-      `;
-      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch (e) {
-      console.warn('Could not set Windows microphone mute:', e);
-    }
-  } else if (process.platform === 'darwin') {
-    try {
-      const vol = mute ? 0 : 100;
-      spawn('osascript', ['-e', `set volume input volume ${vol}`], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch {}
-  } else {
-    try {
-      const flag = mute ? '1' : '0';
-      spawn('pactl', ['set-source-mute', '@DEFAULT_SOURCE@', flag], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } catch {}
-  }
-}
-
 // Karaoke Mode Integration (https://k2.lazeria.com/p?code=xxxx & https://k2.lazeria.com/admin)
 app.post('/api/karaoke/action', async (req: Request, res: Response) => {
   try {
@@ -2027,19 +2273,18 @@ app.post('/api/karaoke/action', async (req: Request, res: Response) => {
     }
 
     if (action === 'start') {
-      // 1. Stop any active cinema video/playlist playback
+      // 1. Stop any active cinema video/playlist playback on Projector Screen
       playbackState.isPlaying = false;
       playbackState.currentTime = 0;
       playbackState.lastAction = 'karaoke_start';
 
-      // 2. Stop Spotify and walk-in pre-show audio & slides
+      // 2. Stop headless Spotify and walk-in pre-show audio & slides on Projector Screen
       playbackState.spotifyPlaying = false;
-      pauseSpotifyOnWindows();
+      triggerSpotifyWebApi('pause');
 
-      // 3. Activate Karaoke mode and unmute microphone for singing
+      // 3. Activate Karaoke mode on Projector Screen
       playbackState.karaokeActive = true;
       playbackState.micMuted = false;
-      setSystemMicrophoneMute(false);
 
       db.run(`
         INSERT INTO settings (key, value) VALUES ('karaoke_active', 'true')
@@ -2050,6 +2295,9 @@ app.post('/api/karaoke/action', async (req: Request, res: Response) => {
       broadcast('PLAYBACK_STOPPED', playbackState);
       broadcast('SPOTIFY_STATE', {
         isPlaying: false,
+        volume: playbackState.spotifyVolume,
+        connected: playbackState.spotifyConnected,
+        deviceName: playbackState.spotifyDeviceName,
         track: playbackState.spotifyTrack,
         artist: playbackState.spotifyArtist,
       });
@@ -2072,25 +2320,18 @@ app.post('/api/karaoke/action', async (req: Request, res: Response) => {
     }
 
     if (action === 'cinema') {
-      // 1. Mute the microphone when switching back to Cinema mode
+      // 1. Mute microphone on Projector Screen PC when switching back to Cinema mode
       playbackState.micMuted = true;
-      setSystemMicrophoneMute(true);
 
-      // 2. Exit Karaoke mode and start Pre-Show Slides (isPlaying = false, karaokeActive = false)
+      // 2. Exit Karaoke mode and start Pre-Show Slides on Projector Screen
       playbackState.karaokeActive = false;
       playbackState.isPlaying = false;
       playbackState.currentTime = 0;
       playbackState.lastAction = 'cinema_mode';
 
-      // 3. Start Spotify audio and walk-in pre-show audio
+      // 3. Start headless Spotify audio and walk-in pre-show audio on Projector Screen
       playbackState.spotifyPlaying = true;
-      const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
-      const spotifyUri = (uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I') as string;
-      const modeRes = db.exec("SELECT value FROM settings WHERE key = 'preshow_music_mode'");
-      const currentMode = (modeRes[0]?.values[0]?.[0] || 'spotify') as string;
-      if (currentMode === 'spotify') {
-        launchAndPlaySpotifyOnWindows(spotifyUri);
-      }
+      triggerSpotifyWebApi('play');
 
       db.run(`
         INSERT INTO settings (key, value) VALUES ('karaoke_active', 'false')
@@ -2105,6 +2346,9 @@ app.post('/api/karaoke/action', async (req: Request, res: Response) => {
       });
       broadcast('SPOTIFY_STATE', {
         isPlaying: true,
+        volume: playbackState.spotifyVolume,
+        connected: playbackState.spotifyConnected,
+        deviceName: playbackState.spotifyDeviceName,
         track: playbackState.spotifyTrack,
         artist: playbackState.spotifyArtist,
       });
@@ -2143,16 +2387,25 @@ app.post('/api/playback/sync', (req: Request, res: Response) => {
 async function startServer() {
   const db = await getDatabase();
   try {
-    const kRes = db.exec("SELECT key, value FROM settings WHERE key IN ('karaoke_code', 'karaoke_active', 'active_slideshow_id')");
+    const kRes = db.exec(
+      "SELECT key, value FROM settings WHERE key IN ('karaoke_code', 'karaoke_active', 'active_slideshow_id', 'spotify_volume', 'spotify_device_name')"
+    );
     if (kRes[0]?.values) {
       kRes[0].values.forEach(([k, v]) => {
         if (k === 'karaoke_code') playbackState.karaokeCode = String(v || '');
         if (k === 'karaoke_active') playbackState.karaokeActive = String(v) === 'true';
         if (k === 'active_slideshow_id' && v) playbackState.activeSlideshowId = String(v);
+        if (k === 'spotify_volume' && v) {
+          const parsedVol = parseFloat(String(v));
+          if (!isNaN(parsedVol)) playbackState.spotifyVolume = Math.max(0, Math.min(1, parsedVol));
+        }
+        if (k === 'spotify_device_name' && v) {
+          playbackState.spotifyDeviceName = String(v);
+        }
       });
     }
   } catch (e) {
-    console.warn('Could not load initial karaoke state from SQLite:', e);
+    console.warn('Could not load initial state from SQLite:', e);
   }
 
   if (process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(process.cwd(), 'dist'))) {
@@ -2183,4 +2436,5 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('Fatal server start error:', err);
 });
+
 

@@ -167,8 +167,14 @@ export default function App() {
         } else if (payload.type === 'SPOTIFY_STATE') {
           setPlayback((prev) => ({
             ...prev,
-            spotifyPlaying: payload.data.isPlaying,
+            spotifyPlaying: payload.data.isPlaying ?? prev.spotifyPlaying,
             spotifyTrack: payload.data.track || prev.spotifyTrack,
+            spotifyArtist: payload.data.artist || prev.spotifyArtist,
+            spotifyVolume:
+              payload.data.volume !== undefined ? Number(payload.data.volume) : prev.spotifyVolume,
+            spotifyConnected:
+              payload.data.connected !== undefined ? Boolean(payload.data.connected) : prev.spotifyConnected,
+            spotifyDeviceName: payload.data.deviceName || prev.spotifyDeviceName,
           }));
         } else if (payload.type === 'KARAOKE_STATE') {
           setPlayback((prev) => ({
@@ -177,6 +183,11 @@ export default function App() {
             karaokeCode: payload.data.karaokeCode ?? prev.karaokeCode,
             micMuted: payload.data.micMuted ?? prev.micMuted,
             isPlaying: payload.data.karaokeActive ? false : prev.isPlaying,
+          }));
+        } else if (payload.type === 'APPLIANCE_STATE') {
+          setPlayback((prev) => ({
+            ...prev,
+            applianceStatus: payload.data,
           }));
         } else if (payload.type === 'AUTOMATION_CUE_FIRED') {
           setPlayback((prev) => ({
@@ -247,6 +258,12 @@ export default function App() {
       if (action === 'spotify_pause') {
         await controlSpotify('pause');
         setPlayback((prev) => ({ ...prev, spotifyPlaying: false }));
+        return;
+      }
+      if (action === 'spotify_volume') {
+        const vol = Math.max(0, Math.min(100, Math.round(Number(value ?? 75))));
+        setPlayback((prev) => ({ ...prev, spotifyVolume: vol }));
+        await controlSpotify('volume', undefined, undefined, vol);
         return;
       }
       if (action === 'spotify_toggle') {
@@ -579,6 +596,9 @@ export default function App() {
           <SpotifyTab
             settings={settings}
             spotifyPlaying={playback.spotifyPlaying}
+            spotifyVolume={playback.spotifyVolume}
+            spotifyConnected={playback.spotifyConnected}
+            spotifyDeviceName={playback.spotifyDeviceName}
             spotifyTrack={playback.spotifyTrack}
             spotifyArtist={playback.spotifyArtist}
             onRefreshSettings={loadAllData}
@@ -598,6 +618,7 @@ export default function App() {
           <SettingsTab
             settings={settings}
             status={status}
+            applianceStatus={playback.applianceStatus || status?.applianceStatus}
             themePattern={themePattern}
             onCyclePattern={cycleThemePattern}
             onSelectPattern={(pat) => {

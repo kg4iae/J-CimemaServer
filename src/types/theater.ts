@@ -38,6 +38,8 @@ export interface MediaItem {
   duration: number;
   resolution: string;
   format: string;
+  audio_channels?: number;
+  audio_layout?: string;
   is_compatible: number;
   conversion_status: 'ready' | 'needs_conversion' | 'converting' | 'failed';
   conversion_progress: number;
@@ -76,6 +78,21 @@ export interface Slideshow {
   slides: SlideshowSlide[];
 }
 
+export interface ApplianceStatus {
+  connected: boolean;
+  hostname: string;
+  ip: string;
+  arch: string;
+  audioProfile: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  librespotRunning: boolean;
+  kioskRunning: boolean;
+  micMuted: boolean;
+  spotifyVolume: number;
+  uptime: number;
+  lastSeen: number;
+  webScreensConnected?: number;
+}
+
 export interface SystemStatus {
   status: string;
   platform: string;
@@ -86,6 +103,7 @@ export interface SystemStatus {
   mediaDir: string;
   remoteUrl: string;
   projectorUrl: string;
+  applianceStatus?: ApplianceStatus;
 }
 
 export interface PlaybackState {
@@ -97,6 +115,9 @@ export interface PlaybackState {
   volume: number;
   isMuted: boolean;
   spotifyPlaying: boolean;
+  spotifyVolume?: number;
+  spotifyConnected?: boolean;
+  spotifyDeviceName?: string;
   spotifyTrack: string;
   spotifyArtist: string;
   activeCue: string | null;
@@ -104,6 +125,7 @@ export interface PlaybackState {
   karaokeActive?: boolean;
   karaokeCode?: string;
   micMuted?: boolean;
+  applianceStatus?: ApplianceStatus;
   lastAction?: string;
 }
 
@@ -114,6 +136,11 @@ export interface TheaterSettings {
   ha_url?: string;
   ha_token?: string;
   spotify_client_id?: string;
+  spotify_access_token?: string;
+  spotify_refresh_token?: string;
+  spotify_token_expires_at?: string;
+  spotify_device_name?: string;
+  spotify_volume?: string;
   spotify_playlist_uri?: string;
   spotify_auto_pause?: string;
   spotify_auto_resume?: string;
@@ -124,6 +151,12 @@ export interface TheaterSettings {
   preshow_display_mode?: 'slideshow' | 'logo';
   karaoke_code?: string;
   karaoke_active?: string;
+  appliance_server_url?: string;
+  appliance_audio_output?: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  appliance_spdif_card?: string;
+  appliance_resolution?: string;
   [key: string]: string | undefined;
 }
+
+
 

@@ -67,6 +67,8 @@ function initSchema(db: SqlJsDatabase) {
       duration REAL NOT NULL,
       resolution TEXT NOT NULL,
       format TEXT NOT NULL,
+      audio_channels INTEGER NOT NULL DEFAULT 2,
+      audio_layout TEXT NOT NULL DEFAULT '2.0 Stereo',
       is_compatible INTEGER NOT NULL DEFAULT 1,
       conversion_status TEXT NOT NULL DEFAULT 'ready',
       conversion_progress REAL NOT NULL DEFAULT 100,
@@ -141,6 +143,14 @@ function initSchema(db: SqlJsDatabase) {
     );
   `);
 
+  // Safe schema migrations for existing SQLite databases
+  try {
+    db.run("ALTER TABLE media_items ADD COLUMN audio_channels INTEGER NOT NULL DEFAULT 2");
+  } catch {}
+  try {
+    db.run("ALTER TABLE media_items ADD COLUMN audio_layout TEXT NOT NULL DEFAULT '2.0 Stereo'");
+  } catch {}
+
   // Seed default settings if empty
   const checkSettings = db.exec("SELECT COUNT(*) as count FROM settings");
   const count = checkSettings[0]?.values[0]?.[0] as number || 0;
@@ -153,20 +163,38 @@ function initSchema(db: SqlJsDatabase) {
       ('ha_url', 'http://homeassistant.local:8123'),
       ('ha_token', ''),
       ('spotify_client_id', ''),
+      ('spotify_access_token', ''),
+      ('spotify_refresh_token', ''),
+      ('spotify_token_expires_at', '0'),
+      ('spotify_device_name', 'CinemaBooth Projector'),
+      ('spotify_volume', '0.80'),
       ('spotify_playlist_uri', 'spotify:playlist:37i9dQZF1DXdgnBRuh640I'),
       ('spotify_auto_pause', 'true'),
       ('spotify_auto_resume', 'true'),
-      ('preshow_music_mode', 'ambient'),
+      ('preshow_music_mode', 'spotify'),
       ('active_slideshow_id', 'ss_general_preshow'),
       ('preshow_display_mode', 'slideshow'),
       ('karaoke_code', ''),
-      ('karaoke_active', 'false')
+      ('karaoke_active', 'false'),
+      ('appliance_server_url', ''),
+      ('appliance_audio_output', 'optical-51-ac3'),
+      ('appliance_spdif_card', '0'),
+      ('appliance_resolution', 'auto')
     `);
   } else {
     db.run(`
       INSERT OR IGNORE INTO settings (key, value) VALUES
+      ('spotify_access_token', ''),
+      ('spotify_refresh_token', ''),
+      ('spotify_token_expires_at', '0'),
+      ('spotify_device_name', 'CinemaBooth Projector'),
+      ('spotify_volume', '0.80'),
       ('karaoke_code', ''),
-      ('karaoke_active', 'false')
+      ('karaoke_active', 'false'),
+      ('appliance_server_url', ''),
+      ('appliance_audio_output', 'optical-51-ac3'),
+      ('appliance_spdif_card', '0'),
+      ('appliance_resolution', 'auto')
     `);
   }
 
@@ -215,12 +243,12 @@ function initSchema(db: SqlJsDatabase) {
   const mediaCount = checkMedia[0]?.values[0]?.[0] as number || 0;
   if (mediaCount === 0) {
     db.run(`
-      INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at) VALUES
-      ('media_countdown_bumper', 'Classic Cinema Countdown Bumper', 'countdown_bumper.mp4', 'countdown_bumper.mp4', '/media/countdown_bumper.mp4', 15480000, 15.0, '3840x2160', 'mp4', 1, 'ready', 100, datetime('now')),
-      ('media_vintage_policy', 'Theater Courtesy & Silence Phones Trailer', 'theater_policy.mp4', 'theater_policy.mp4', '/media/theater_policy.mp4', 28400000, 32.0, '1920x1080', 'mp4', 1, 'ready', 100, datetime('now')),
-      ('media_trailer_nature', 'Feature Trailer: Celestial Horizons 4K', 'celestial_trailer.mp4', 'celestial_trailer.mp4', '/media/celestial_trailer.mp4', 85000000, 110.0, '3840x2160', 'mp4', 1, 'ready', 100, datetime('now')),
-      ('media_main_feature', 'Main Presentation: The Grand Voyage', 'main_feature.mp4', 'main_feature.mp4', '/media/main_feature.mp4', 420000000, 360.0, '3840x2160', 'mp4', 1, 'ready', 100, datetime('now')),
-      ('media_outro_credits', 'Theater Farewell & Next Week Preview', 'outro_preview.mp4', 'outro_preview.mp4', '/media/outro_preview.mp4', 42000000, 45.0, '1920x1080', 'mp4', 1, 'ready', 100, datetime('now'))
+      INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, audio_channels, audio_layout, is_compatible, conversion_status, conversion_progress, created_at) VALUES
+      ('media_countdown_bumper', 'Classic Cinema Countdown Bumper', 'countdown_bumper.mp4', 'countdown_bumper.mp4', '/media/countdown_bumper.mp4', 15480000, 15.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+      ('media_vintage_policy', 'Theater Courtesy & Silence Phones Trailer', 'theater_policy.mp4', 'theater_policy.mp4', '/media/theater_policy.mp4', 28400000, 32.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now')),
+      ('media_trailer_nature', 'Feature Trailer: Celestial Horizons 4K', 'celestial_trailer.mp4', 'celestial_trailer.mp4', '/media/celestial_trailer.mp4', 85000000, 110.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+      ('media_main_feature', 'Main Presentation: The Grand Voyage', 'main_feature.mp4', 'main_feature.mp4', '/media/main_feature.mp4', 420000000, 360.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+      ('media_outro_credits', 'Theater Farewell & Next Week Preview', 'outro_preview.mp4', 'outro_preview.mp4', '/media/outro_preview.mp4', 42000000, 45.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now'))
     `);
   }
 

@@ -3,6 +3,7 @@ import { Volume2, VolumeX, Music, Sparkles } from 'lucide-react';
 import { PlaybackState, Playlist, PlaylistItem, TheaterSettings, Slideshow, SlideshowSlide } from '../types/theater';
 import { fetchPlaylists, fetchSettings, syncPlaybackProgress, fetchSlideshows } from '../services/api';
 import { preshowAudio } from '../services/preshowAudio';
+import { headlessSpotifyPlayer } from '../services/spotifyPlayer';
 
 export default function ProjectorScreen() {
   const [playback, setPlayback] = useState<PlaybackState>({
@@ -14,6 +15,9 @@ export default function ProjectorScreen() {
     volume: 1.0,
     isMuted: false,
     spotifyPlaying: true,
+    spotifyVolume: 0.8,
+    spotifyConnected: false,
+    spotifyDeviceName: 'CinemaBooth Projector',
     spotifyTrack: '',
     spotifyArtist: '',
     activeCue: null,
@@ -37,32 +41,161 @@ export default function ProjectorScreen() {
   // Pre-show slideshow rotation state
   const [currentSlideIndex, setCurrentSlideIndex] = useState<number>(0);
   const [isAutoplayBlocked, setIsAutoplayBlocked] = useState<boolean>(false);
+  const [activeSpeakerTest, setActiveSpeakerTest] = useState<string | null>(null);
+
+  const isNativeAppliance = new URLSearchParams(window.location.search).get('appliance') === 'true';
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const speakerAudioCtxRef = useRef<AudioContext | null>(null);
 
-  // Subscribe to browser audio autoplay state
+  // Discrete 6-Channel (5.1 Surround) & Stereo-Fallback Test Tone Synthesizer
+  const playDiscrete51ChannelTone = (channelKey: 'fl' | 'c' | 'fr' | 'sl' | 'sr' | 'lfe') => {
+    const labels: Record<string, string> = {
+      fl: 'Front Left (Ch 1)',
+      fr: 'Front Right (Ch 2)',
+      c: 'Center Dialog (Ch 3)',
+      lfe: 'LFE Subwoofer (Ch 4)',
+      sl: 'Surround Left (Ch 5)',
+      sr: 'Surround Right (Ch 6)',
+    };
+    setActiveSpeakerTest(labels[channelKey] || channelKey.toUpperCase());
+
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!speakerAudioCtxRef.current) {
+        speakerAudioCtxRef.current = new AudioCtx();
+      }
+      const ctx = speakerAudioCtxRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      const maxCh = ctx.destination.maxChannelCount || 2;
+      const isSixChannelCapable = maxCh >= 6;
+      if (isSixChannelCapable) {
+        ctx.destination.channelCount = 6;
+        ctx.destination.channelCountMode = 'explicit';
+        ctx.destination.channelInterpretation = 'discrete';
+      }
+
+      const now = ctx.currentTime;
+      const duration = 1.1;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      // Frequencies tailored per speaker (Subwoofer uses 55Hz low-frequency LFE sine wave)
+      const freqMap: Record<string, number> = {
+        fl: 440,
+        c: 523.25,
+        fr: 659.25,
+        sl: 392,
+        sr: 493.88,
+        lfe: 55,
+      };
+      osc.type = channelKey === 'lfe' ? 'sine' : 'triangle';
+      osc.frequency.setValueAtTime(freqMap[channelKey] || 440, now);
+
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(channelKey === 'lfe' ? 0.55 : 0.3, now + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+      osc.connect(gain);
+
+      if (isSixChannelCapable) {
+        // Standard SMPTE / Web Audio 5.1 layout: 0=FL, 1=FR, 2=C, 3=LFE, 4=SL, 5=SR
+        const channelIndexMap: Record<string, number> = {
+          fl: 0,
+          fr: 1,
+          c: 2,
+          lfe: 3,
+          sl: 4,
+          sr: 5,
+        };
+        const merger = ctx.createChannelMerger(6);
+        gain.connect(merger, 0, channelIndexMap[channelKey] ?? 0);
+        merger.connect(ctx.destination);
+      } else {
+        // 2-Channel Stereo Browser Testing Fallback (pans left/center/right so web testing is clear)
+        const panner = ctx.createStereoPanner();
+        const panMap: Record<string, number> = {
+          fl: -0.9,
+          sl: -0.65,
+          c: 0,
+          lfe: 0,
+          sr: 0.65,
+          fr: 0.9,
+        };
+        panner.pan.setValueAtTime(panMap[channelKey] ?? 0, now);
+        gain.connect(panner);
+        panner.connect(ctx.destination);
+      }
+
+      osc.start(now);
+      osc.stop(now + duration);
+    } catch (e) {
+      console.warn('5.1 speaker test audio error:', e);
+    }
+  };
+
+  const triggerSpeakerTestSequence = (channel: string) => {
+    if (channel === 'all') {
+      const sequence: Array<'fl' | 'c' | 'fr' | 'sr' | 'sl' | 'lfe'> = ['fl', 'c', 'fr', 'sr', 'sl', 'lfe'];
+      sequence.forEach((ch, idx) => {
+        setTimeout(() => {
+          playDiscrete51ChannelTone(ch);
+        }, idx * 1250);
+      });
+      setTimeout(() => {
+        setActiveSpeakerTest(null);
+      }, sequence.length * 1250 + 300);
+    } else {
+      playDiscrete51ChannelTone(channel as any);
+      setTimeout(() => {
+        setActiveSpeakerTest(null);
+      }, 1300);
+    }
+  };
+
+  // Subscribe to browser audio autoplay state and initialize headless Spotify Connect receiver
+  // (In Native Linux Appliance mode, native librespot handles Spotify Connect so we skip the duplicate browser SDK)
   useEffect(() => {
     const unsub = preshowAudio.subscribeAutoplay(setIsAutoplayBlocked);
+    if (!isNativeAppliance) {
+      headlessSpotifyPlayer.init(playback.spotifyVolume ?? 0.8);
+    }
     return unsub;
-  }, []);
+  }, [isNativeAppliance]);
 
-  // Synchronize Pre-Show Walk-In Audio engine with theater state
+  // Synchronize Pre-Show Walk-In Audio engine and Headless Spotify Player with theater state
   useEffect(() => {
+    const isSpotifyActive = !playback.isPlaying && !playback.karaokeActive && playback.spotifyPlaying;
+    const effectiveSpotifyVol = typeof playback.spotifyVolume === 'number' ? playback.spotifyVolume : playback.volume;
+
+    if (!isNativeAppliance) {
+      headlessSpotifyPlayer.syncState({
+        shouldPlay: isSpotifyActive,
+        volume: effectiveSpotifyVol,
+        isMuted: playback.isMuted,
+      });
+    }
+
     preshowAudio.syncState({
       isPlaylistPlaying: playback.isPlaying || Boolean(playback.karaokeActive),
       spotifyPlaying: playback.spotifyPlaying && !playback.karaokeActive,
-      volume: playback.volume,
+      volume: effectiveSpotifyVol,
       isMuted: playback.isMuted,
       preshowMusicMode: settings.preshow_music_mode,
       customAudioUrl: settings.preshow_audio_url,
     });
   }, [
+    isNativeAppliance,
     playback.isPlaying,
     playback.karaokeActive,
     playback.spotifyPlaying,
+    playback.spotifyVolume,
     playback.volume,
     playback.isMuted,
     settings.preshow_music_mode,
@@ -92,18 +225,29 @@ export default function ProjectorScreen() {
     }
   }, [playlists, playback.currentPlaylistId, playback.currentItemIndex]);
 
-  // Connect WebSocket for zero-latency control from mobile remote
+  // Connect WebSocket for zero-latency control from mobile/tablet/Chromebook remote
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: 'REGISTER_SCREEN',
+          data: { appliance: isNativeAppliance },
+        })
+      );
+    };
+
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
         if (payload.type === 'INIT_STATE') {
           setPlayback(payload.data);
+        } else if (payload.type === 'SPEAKER_TEST_51') {
+          triggerSpeakerTestSequence(payload.data?.channel || 'all');
         } else if (payload.type === 'PLAYBACK_ACTION') {
           const { action, value, playbackState } = payload.data;
           setPlayback(playbackState);
@@ -140,6 +284,18 @@ export default function ProjectorScreen() {
           }
           if (!payload.data.karaokeActive) {
             setCurrentSlideIndex(0);
+            // Release/mute any active microphone capture streams on the Projector PC
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+              navigator.mediaDevices
+                .getUserMedia({ audio: true })
+                .then((stream) => {
+                  stream.getAudioTracks().forEach((t) => {
+                    t.enabled = false;
+                    t.stop();
+                  });
+                })
+                .catch(() => {});
+            }
           }
         } else if (payload.type === 'ITEM_CHANGED') {
           setPlayback(payload.data);
@@ -166,8 +322,14 @@ export default function ProjectorScreen() {
           setPlayback((prev) => ({
             ...prev,
             spotifyPlaying: payload.data.isPlaying,
+            spotifyVolume: typeof payload.data.volume === 'number' ? payload.data.volume : prev.spotifyVolume,
+            spotifyConnected: typeof payload.data.connected === 'boolean' ? payload.data.connected : prev.spotifyConnected,
+            spotifyDeviceName: payload.data.deviceName || prev.spotifyDeviceName,
             spotifyTrack: payload.data.track || prev.spotifyTrack,
+            spotifyArtist: payload.data.artist || prev.spotifyArtist,
           }));
+        } else if (payload.type === 'SPOTIFY_TOKEN_UPDATED') {
+          headlessSpotifyPlayer.reconnect();
         } else if (payload.type === 'SLIDESHOWS_UPDATED') {
           fetchSlideshows().then(setSlideshows).catch(console.error);
         } else if (payload.type === 'SETTINGS_UPDATED' || payload.type === 'LOGO_UPDATED') {
@@ -264,6 +426,7 @@ export default function ProjectorScreen() {
       onClick={() => {
         if (!isKaraokeMode) {
           preshowAudio.unlockAudio();
+          headlessSpotifyPlayer.unlockAudio();
         }
       }}
       onDoubleClick={toggleFullscreen}
@@ -280,6 +443,21 @@ export default function ProjectorScreen() {
             allow="microphone; autoplay; fullscreen; camera; display-capture"
             className="w-full h-full border-0 bg-black"
           />
+        </div>
+      )}
+
+      {/* 0.5. 5.1 SURROUND SPEAKER TEST CALLOUT OVERLAY */}
+      {activeSpeakerTest && (
+        <div className="absolute top-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3.5 rounded-2xl bg-slate-950/90 border border-emerald-400/80 text-white shadow-2xl backdrop-blur-md flex items-center gap-3 pointer-events-none">
+          <Volume2 className="w-5 h-5 text-emerald-400 animate-pulse" />
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-emerald-300">
+              5.1 Surround Calibration Signal
+            </div>
+            <div className="text-sm font-bold tracking-tight text-white">
+              Testing Speaker: {activeSpeakerTest}
+            </div>
+          </div>
         </div>
       )}
 

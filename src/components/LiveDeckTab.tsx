@@ -123,22 +123,40 @@ export default function LiveDeckTab({
           </div>
         </div>
 
-        {/* Live Deck Controls: Audio Toggle and Slideshow Selector */}
+        {/* Live Deck Controls: Audio Toggle, Spotify Volume, and Slideshow Selector */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Quick Pre-show Audio Toggle */}
-          <button
-            type="button"
-            onClick={() => onControl(playback.spotifyPlaying ? 'spotify_pause' : 'spotify_play')}
-            title="Toggle Pre-show Walk-in Music"
-            className={`min-h-[42px] px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all border cursor-pointer active:scale-95 ${
-              playback.spotifyPlaying
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
-                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <Music className={`w-3.5 h-3.5 ${playback.spotifyPlaying ? 'text-emerald-600 animate-pulse' : 'text-slate-400'}`} />
-            <span>Walk-In Audio: {playback.spotifyPlaying ? 'ON' : 'OFF'}</span>
-          </button>
+          {/* Quick Pre-show Spotify Audio On/Off + Volume */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl p-1 pr-3">
+            <button
+              type="button"
+              onClick={() => onControl(playback.spotifyPlaying ? 'spotify_pause' : 'spotify_play')}
+              title="Toggle Headless Projector Spotify Walk-in Music"
+              className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition-all border cursor-pointer active:scale-95 ${
+                playback.spotifyPlaying
+                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-500 shadow-2xs'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <Music className={`w-3.5 h-3.5 ${playback.spotifyPlaying ? 'text-white animate-pulse' : 'text-slate-400'}`} />
+              <span>Spotify: {playback.spotifyPlaying ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 pl-1" title="Projector Spotify Volume">
+              <Volume2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={playback.spotifyVolume ?? 75}
+                onChange={(e) => onControl('spotify_volume', parseInt(e.target.value, 10))}
+                className="w-20 sm:w-24 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+              />
+              <span className="text-[11px] font-mono font-bold text-slate-600 w-8 text-right">
+                {playback.spotifyVolume ?? 75}%
+              </span>
+            </div>
+          </div>
 
           {/* Slideshow Selector */}
           <div className="flex items-center gap-2">

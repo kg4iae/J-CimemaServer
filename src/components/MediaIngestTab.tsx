@@ -427,6 +427,10 @@ export default function MediaIngestTab({
                           <span>·</span>
                           <span>{item.resolution}</span>
                           <span>·</span>
+                          <span className={item.audio_channels && item.audio_channels >= 6 ? 'text-emerald-700 font-bold' : 'text-slate-600'}>
+                            {item.audio_layout || (item.audio_channels && item.audio_channels >= 6 ? '5.1 Surround' : '2.0 Stereo')}
+                          </span>
+                          <span>·</span>
                           <span>{formatDuration(item.duration)}</span>
                           <span>·</span>
                           <span>{formatBytes(item.file_size)}</span>

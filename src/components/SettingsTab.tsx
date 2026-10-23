@@ -1,7 +1,26 @@
-import React, { useState, useRef } from 'react';
-import { Settings, Upload, Image as ImageIcon, Check, Monitor, Database, Terminal, Shield, Copy, DownloadCloud, Palette, Sparkles } from 'lucide-react';
-import { TheaterSettings, SystemStatus } from '../types/theater';
-import { saveSettings, uploadLogo } from '../services/api';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Settings,
+  Upload,
+  Image as ImageIcon,
+  Check,
+  Monitor,
+  Database,
+  Terminal,
+  Copy,
+  DownloadCloud,
+  Palette,
+  Sparkles,
+  Volume2,
+  Cpu,
+  RefreshCw,
+  MicOff,
+  Mic,
+  ExternalLink,
+  Speaker,
+} from 'lucide-react';
+import { TheaterSettings, SystemStatus, ApplianceStatus } from '../types/theater';
+import { saveSettings, uploadLogo, sendApplianceCommand } from '../services/api';
 
 const PATTERN_OPTIONS: Array<{
   id: 'projector' | 'blueprint' | 'waves' | 'geometric';
@@ -35,9 +54,36 @@ const PATTERN_OPTIONS: Array<{
   },
 ];
 
+const AUDIO_PROFILES: Array<{
+  id: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  title: string;
+  subtitle: string;
+  desc: string;
+}> = [
+  {
+    id: 'optical-51-ac3',
+    title: 'Optical TOSLINK 5.1 Surround (Dolby Digital AC-3)',
+    subtitle: '640 kbps Real-Time AC-3 Bitstream (ALSA a52)',
+    desc: 'Encodes 6-channel audio in real time into a Dolby Digital 5.1 bitstream over a single Optical S/PDIF cable while seamlessly supporting 2.0 Spotify and Karaoke.',
+  },
+  {
+    id: 'hdmi-51-pcm',
+    title: 'HDMI 5.1 Surround (Uncompressed 6-Channel LPCM)',
+    subtitle: 'Direct HDMI to 5.1 AVR or Dual-HDMI Mini PC',
+    desc: 'Outputs discrete 6-channel uncompressed PCM over HDMI (ideal when running HDMI 1 to the Projector and HDMI 2 to your 5.1 Surround Receiver).',
+  },
+  {
+    id: 'stereo-20',
+    title: 'Standard 2.0 Stereo Output',
+    subtitle: '2-Channel PCM (HDMI / 3.5mm Analog / Optical Stereo)',
+    desc: 'Standard 2-channel stereo mixdown for 2.0 soundbars, projector speakers, or analog stereo amplifiers.',
+  },
+];
+
 interface SettingsTabProps {
   settings: TheaterSettings;
   status: SystemStatus | null;
+  applianceStatus?: ApplianceStatus;
   themePattern?: 'projector' | 'blueprint' | 'waves' | 'geometric';
   onCyclePattern?: () => void;
   onSelectPattern?: (pattern: 'projector' | 'blueprint' | 'waves' | 'geometric') => void;
@@ -47,26 +93,103 @@ interface SettingsTabProps {
 export default function SettingsTab({
   settings,
   status,
+  applianceStatus,
   themePattern = 'projector',
   onCyclePattern,
   onSelectPattern,
   onRefreshSettings,
 }: SettingsTabProps) {
+  const defaultServerUrl =
+    settings.appliance_server_url ||
+    status?.remoteUrl ||
+    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+
   const [theaterName, setTheaterName] = useState(settings.theater_name || 'Grand Majestic Cinema');
+  const [serverUrl, setServerUrl] = useState(defaultServerUrl);
+  const [audioProfile, setAudioProfile] = useState<'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20'>(
+    (settings.appliance_audio_output as any) || 'optical-51-ac3'
+  );
+  const [spdifCard, setSpdifCard] = useState(settings.appliance_spdif_card || '0');
+  const [resolution, setResolution] = useState(settings.appliance_resolution || 'auto');
+
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [copiedScript, setCopiedScript] = useState(false);
+  const [applianceMessage, setApplianceMessage] = useState<string | null>(null);
+  const [copiedAptCmd, setCopiedAptCmd] = useState(false);
+  const [testingChannel, setTestingChannel] = useState<string | null>(null);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (settings.theater_name) setTheaterName(settings.theater_name);
+    if (settings.appliance_server_url) setServerUrl(settings.appliance_server_url);
+    if (settings.appliance_audio_output) setAudioProfile(settings.appliance_audio_output as any);
+    if (settings.appliance_spdif_card) setSpdifCard(settings.appliance_spdif_card);
+    if (settings.appliance_resolution) setResolution(settings.appliance_resolution);
+  }, [
+    settings.theater_name,
+    settings.appliance_server_url,
+    settings.appliance_audio_output,
+    settings.appliance_spdif_card,
+    settings.appliance_resolution,
+  ]);
 
   const handleSaveGeneral = async () => {
     try {
       await saveSettings({ theater_name: theaterName });
-      setSaveMessage('Settings saved successfully.');
+      setSaveMessage('Theater profile saved to SQLite database.');
       setTimeout(() => setSaveMessage(null), 3000);
       onRefreshSettings();
     } catch (e: any) {
-      alert(`Failed to save settings: ${e.message}`);
+      setSaveMessage(`Failed to save settings: ${e.message}`);
+    }
+  };
+
+  const handleSaveApplianceConfig = async () => {
+    try {
+      await saveSettings({
+        appliance_server_url: serverUrl.trim(),
+        appliance_audio_output: audioProfile,
+        appliance_spdif_card: spdifCard.trim() || '0',
+        appliance_resolution: resolution,
+      });
+      setApplianceMessage('Appliance & 5.1 Surround configuration saved to SQLite.');
+      setTimeout(() => setApplianceMessage(null), 3500);
+      onRefreshSettings();
+    } catch (e: any) {
+      setApplianceMessage(`Failed to save appliance config: ${e.message}`);
+    }
+  };
+
+  const handleTriggerSpeakerTest = async (channel: 'all' | 'fl' | 'c' | 'fr' | 'sl' | 'sr' | 'lfe') => {
+    setTestingChannel(channel);
+    try {
+      await sendApplianceCommand('speaker_test_51', channel);
+      setApplianceMessage(
+        channel === 'all'
+          ? 'Playing 6-channel 5.1 surround sweep on active Projector Screens...'
+          : `Testing discrete speaker channel (${channel.toUpperCase()}) on Projector Screen...`
+      );
+    } catch (e: any) {
+      setApplianceMessage(`Speaker test error: ${e.message}`);
+    } finally {
+      setTimeout(() => {
+        setTestingChannel(null);
+      }, channel === 'all' ? 7500 : 1400);
+      setTimeout(() => setApplianceMessage(null), 5000);
+    }
+  };
+
+  const handleRemoteServiceAction = async (
+    action: 'restart_kiosk' | 'restart_spotify' | 'mute_mic' | 'unmute_mic',
+    label: string
+  ) => {
+    try {
+      await sendApplianceCommand(action);
+      setApplianceMessage(`Sent "${label}" command to Projector Appliance.`);
+      setTimeout(() => setApplianceMessage(null), 3500);
+    } catch (e: any) {
+      setApplianceMessage(`Command failed: ${e.message}`);
     }
   };
 
@@ -83,7 +206,7 @@ export default function SettingsTab({
         onRefreshSettings();
       }
     } catch (err: any) {
-      alert(`Logo upload failed: ${err.message}`);
+      setSaveMessage(`Logo upload failed: ${err.message}`);
     } finally {
       setIsUploadingLogo(false);
       if (logoInputRef.current) logoInputRef.current.value = '';
@@ -91,6 +214,17 @@ export default function SettingsTab({
   };
 
   const currentLogo = settings.logo_url || '/assets/theater_logo.svg';
+  const cleanServerUrl = (serverUrl || defaultServerUrl).replace(/\/+$/, '');
+  const debDownloadUrl = `/api/appliance/deb?server=${encodeURIComponent(cleanServerUrl)}&audio=${encodeURIComponent(
+    audioProfile
+  )}&card=${encodeURIComponent(spdifCard || '0')}&resolution=${encodeURIComponent(resolution)}`;
+
+  const sshInstallCommand = `curl -fsSL "${cleanServerUrl}/api/appliance/deb?server=${encodeURIComponent(
+    cleanServerUrl
+  )}&audio=${audioProfile}&card=${spdifCard || '0'}" -o cinemabooth-projector.deb && sudo apt update && sudo apt install -y ./cinemabooth-projector.deb`;
+
+  const webScreensCount = applianceStatus?.webScreensConnected ?? 0;
+  const isNativeConnected = Boolean(applianceStatus?.connected);
 
   return (
     <div className="space-y-6">
@@ -142,22 +276,11 @@ export default function SettingsTab({
                     <Sparkles className={`w-3.5 h-3.5 ${isSelected ? 'text-blue-600' : 'text-slate-400'}`} />
                     {opt.title}
                   </span>
-                  {isSelected && (
-                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-                  )}
                 </div>
-                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                  {opt.desc}
-                </p>
-                <div className="mt-2.5 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-slate-400 uppercase">
-                    {opt.badge}
-                  </span>
-                  {isSelected && (
-                    <span className="text-[10px] font-bold text-blue-700 bg-white border border-blue-200 px-2 py-0.5 rounded-md">
-                      Active
-                    </span>
-                  )}
+                <p className="text-[11px] text-slate-500 font-medium leading-relaxed">{opt.desc}</p>
+                <div className="mt-2.5 flex items-center justify-between text-[10px] font-mono text-slate-400">
+                  <span>{opt.badge}</span>
+                  {isSelected && <span className="font-bold text-blue-700">Active</span>}
                 </div>
               </button>
             );
@@ -165,7 +288,319 @@ export default function SettingsTab({
         </div>
       </div>
 
-      {/* 1. PROJECTOR LOGO UPLOADER (Bright White / Slate / Blue / Green) */}
+      {/* 1. DUAL-MODE PROJECTOR ARCHITECTURE: WEB TESTING + NATIVE LINUX MINI PC (.deb & 5.1 SURROUND) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Cpu className="w-5 h-5 text-blue-600" />
+              Projector Output Targets: Web Browser Testing &amp; Native Linux Mini PC Appliance
+            </h3>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Use the Web Page Projector Screen in any browser for testing, and install the Debian (<code>.deb</code>) package on your x86_64 Mini PC for production 5.1 surround projection.
+            </p>
+          </div>
+
+          <a
+            href="/?mode=screen"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="min-h-[42px] px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-colors shadow-2xs whitespace-nowrap shrink-0"
+          >
+            <Monitor className="w-4 h-4 text-emerald-400" />
+            <span>Open Web Projector (Testing)</span>
+            <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+          </a>
+        </div>
+
+        {/* Dual-Mode Live Connection Status Strip */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Mode A: Web Browser Testing Status */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Monitor className="w-4 h-4 text-blue-600" />
+                Web Browser Projector (Testing Mode)
+              </span>
+              <span className="text-xs font-mono tabular-nums font-semibold text-slate-700">
+                {webScreensCount > 0 ? `${webScreensCount} Screen(s) Open` : 'Standby (Click Above to Test)'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Runs in any desktop/laptop browser via <code>/?mode=screen</code>. Includes video, pre-show slides, Karaoke web view, browser Spotify Web Playback SDK, and stereo/5.1 speaker test tones.
+            </p>
+          </div>
+
+          {/* Mode B: Native Linux Mini PC Appliance Status */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-emerald-600" />
+                Native Linux Mini PC Appliance (Production)
+              </span>
+              <span
+                className={`text-xs font-mono tabular-nums font-semibold ${
+                  isNativeConnected ? 'text-emerald-700' : 'text-slate-500'
+                }`}
+              >
+                {isNativeConnected
+                  ? `Connected · ${applianceStatus?.hostname} (${applianceStatus?.ip})`
+                  : 'Awaiting .deb Installation'}
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2 font-mono tabular-nums">
+              <span>Wayland Cage: {applianceStatus?.kioskRunning ? 'Active' : 'Standby'}</span>
+              <span>·</span>
+              <span>Librespot Daemon: {applianceStatus?.librespotRunning ? 'Active' : 'Standby'}</span>
+              <span>·</span>
+              <span>Hardware Mic: {applianceStatus?.micMuted !== false ? 'Muted' : 'Live (Karaoke)'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 5.1 Surround Audio Output Profile Selection */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+              <Speaker className="w-4 h-4 text-blue-600" />
+              1. Select Surround Sound &amp; Audio Output Profile (Baked into .deb Installer)
+            </label>
+            <span className="text-[11px] text-slate-500 font-mono">
+              Configures /etc/asound.conf &amp; Chromium 5.1 Pipeline
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            {AUDIO_PROFILES.map((prof) => {
+              const selected = audioProfile === prof.id;
+              return (
+                <button
+                  key={prof.id}
+                  type="button"
+                  onClick={() => setAudioProfile(prof.id)}
+                  className={`p-4 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    selected
+                      ? 'bg-blue-50/90 border-blue-600 ring-2 ring-blue-500/20 text-slate-900'
+                      : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-bold text-slate-900">{prof.title}</div>
+                    <div className="text-[11px] font-mono text-blue-700 font-semibold">{prof.subtitle}</div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed pt-1">{prof.desc}</p>
+                  </div>
+                  <div className="mt-3 pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px] font-mono">
+                    <span className="text-slate-500">{prof.id}</span>
+                    <span className={selected ? 'font-bold text-blue-700' : 'text-slate-400'}>
+                      {selected ? 'Selected Profile' : 'Select'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Appliance Connection Parameters */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              CinemaBooth Docker Server URL (LAN IP)
+            </label>
+            <input
+              type="url"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              placeholder="http://192.168.1.50:3000"
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-600"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              ALSA Optical / HDMI Sound Card Index
+            </label>
+            <input
+              type="text"
+              value={spdifCard}
+              onChange={(e) => setSpdifCard(e.target.value)}
+              placeholder="0 (Default Card 0)"
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-blue-600"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Projector Display Resolution
+            </label>
+            <select
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-900 font-semibold focus:outline-none focus:border-blue-600"
+            >
+              <option value="auto">Auto-Negotiate EDID (Recommended)</option>
+              <option value="1920x1080@60">1080p Full HD (1920x1080 @ 60Hz)</option>
+              <option value="3840x2160@60">4K UHD (3840x2160 @ 60Hz)</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Save Config & Download .deb Package Actions */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSaveApplianceConfig}
+              className="min-h-[44px] px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+            >
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>Save Appliance Defaults</span>
+            </button>
+
+            <a
+              href={debDownloadUrl}
+              download="cinemabooth-projector_1.0.0_amd64.deb"
+              className="min-h-[44px] px-5 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-sm shadow-blue-600/20"
+            >
+              <DownloadCloud className="w-4 h-4" />
+              <span>Download Debian Package (cinemabooth-projector_1.0.0_amd64.deb)</span>
+            </a>
+          </div>
+
+          {/* Remote Service Controls for Connected Mini PC */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleRemoteServiceAction('restart_kiosk', 'Restart Wayland Kiosk')}
+              className="min-h-[38px] px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
+              <span>Restart Kiosk</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRemoteServiceAction('restart_spotify', 'Restart Librespot')}
+              className="min-h-[38px] px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Restart Librespot</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                handleRemoteServiceAction(
+                  applianceStatus?.micMuted === false ? 'mute_mic' : 'unmute_mic',
+                  applianceStatus?.micMuted === false ? 'Mute Hardware Mic' : 'Unmute Hardware Mic'
+                )
+              }
+              className="min-h-[38px] px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer"
+            >
+              {applianceStatus?.micMuted === false ? (
+                <>
+                  <MicOff className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Mute Mic</span>
+                </>
+              ) : (
+                <>
+                  <Mic className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Test Unmute Mic</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* One-Line SSH Install Command for Minimal Debian 12 / Ubuntu Server on Intel NUC / Beelink */}
+        <div className="p-4 bg-slate-900 text-slate-100 rounded-xl space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-blue-300 flex items-center gap-1.5">
+              <Terminal className="w-4 h-4 text-emerald-400" />
+              One-Command SSH Installer for Minimal Debian 12 / Ubuntu Server (x86_64 Mini PC)
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(sshInstallCommand);
+                setCopiedAptCmd(true);
+                setTimeout(() => setCopiedAptCmd(false), 2500);
+              }}
+              className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] flex items-center gap-1.5 transition-colors border border-slate-700 cursor-pointer shrink-0"
+            >
+              {copiedAptCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
+              <span>{copiedAptCmd ? 'Copied Command' : 'Copy SSH Command'}</span>
+            </button>
+          </div>
+          <p className="text-slate-400 text-[11px] leading-relaxed">
+            Run this on a fresh Debian 12 netinst Mini PC. It downloads your pre-configured <code>.deb</code> package, installs Wayland <code>cage</code>, Intel VA-API drivers, <code>librespot</code>, and ALSA 5.1 AC-3 optical encoding (<code>libasound2-plugins</code>), and starts the projector kiosk automatically.
+          </p>
+          <div className="p-2.5 bg-black/60 rounded-lg font-mono text-[11px] text-emerald-400 select-all overflow-x-auto border border-slate-800">
+            {sshInstallCommand}
+          </div>
+        </div>
+
+        {/* Interactive 5.1 Surround Sound Speaker Channel Tester */}
+        <div className="p-5 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-emerald-600" />
+                2. Interactive 5.1 Surround Sound Speaker Calibration Test
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Plays discrete 6-channel test tones on both the Web Browser Projector Screen (for testing) and your 5.1 Surround System (Optical AC-3 / HDMI 5.1).
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleTriggerSpeakerTest('all')}
+              disabled={testingChannel !== null}
+              className="min-h-[40px] px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
+            >
+              <Volume2 className="w-4 h-4" />
+              <span>{testingChannel === 'all' ? 'Sweeping All 6 Channels...' : 'Sweep All 5.1 Channels'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+            {[
+              { id: 'fl', label: 'Front Left', ch: 'Ch 1 · FL' },
+              { id: 'c', label: 'Center Dialog', ch: 'Ch 3 · C' },
+              { id: 'fr', label: 'Front Right', ch: 'Ch 2 · FR' },
+              { id: 'sl', label: 'Surround Left', ch: 'Ch 5 · SL' },
+              { id: 'sr', label: 'Surround Right', ch: 'Ch 6 · SR' },
+              { id: 'lfe', label: 'Subwoofer LFE', ch: 'Ch 4 · 55Hz' },
+            ].map((spk) => {
+              const active = testingChannel === spk.id;
+              return (
+                <button
+                  key={spk.id}
+                  type="button"
+                  onClick={() => handleTriggerSpeakerTest(spk.id as any)}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    active
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                      : 'bg-white hover:bg-slate-100 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <div className="text-xs font-bold">{spk.label}</div>
+                  <div className={`text-[10px] font-mono mt-0.5 ${active ? 'text-emerald-100' : 'text-slate-400'}`}>
+                    {spk.ch}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {applianceMessage && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-900">
+            {applianceMessage}
+          </div>
+        )}
+      </div>
+
+      {/* 2. PROJECTOR LOGO UPLOADER */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-200">
           <div>
@@ -182,7 +617,7 @@ export default function SettingsTab({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center pt-1">
           {/* Logo Preview */}
           <div className="space-y-2">
-            <span className="text-xs text-slate-600 font-bold uppercase tracking-wider">Current Standby Graphic</span>
+            <span className="text-xs text-slate-600 font-bold">Current Standby Graphic</span>
             <div className="aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-300 p-2 flex items-center justify-center relative shadow-inner">
               <img
                 src={currentLogo}
@@ -201,7 +636,7 @@ export default function SettingsTab({
           {/* Upload Button & Guidance */}
           <div className="space-y-4">
             <div className="text-xs text-slate-600 leading-relaxed font-medium">
-              Upload your high-resolution theater logo (.JPG recommended, 1920x1080 or 3840x2160 4K). The file will be stored directly in local PC storage.
+              Upload your high-resolution theater logo (.JPG recommended, 1920x1080 or 3840x2160 4K). The file is persisted on the server and synchronized to all Projector Screens.
             </div>
 
             <input
@@ -215,7 +650,7 @@ export default function SettingsTab({
             <button
               onClick={() => logoInputRef.current?.click()}
               disabled={isUploadingLogo}
-              className="min-h-[44px] px-5 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-blue-600/20 transition-all disabled:opacity-50"
+              className="min-h-[44px] px-5 py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm shadow-blue-600/20 transition-all disabled:opacity-50 cursor-pointer"
             >
               <Upload className="w-4 h-4" />
               <span>{isUploadingLogo ? 'Saving Logo...' : 'Upload New Theater Logo (JPG)'}</span>
@@ -228,7 +663,7 @@ export default function SettingsTab({
         </div>
       </div>
 
-      {/* 2. THEATER DETAILS & GENERAL SETTINGS */}
+      {/* 3. THEATER DETAILS & GENERAL SETTINGS */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
         <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 pb-3 border-b border-slate-200">
           <Settings className="w-4 h-4 text-blue-600" />
@@ -252,95 +687,32 @@ export default function SettingsTab({
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={handleSaveGeneral}
-              className="min-h-[44px] px-5 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shadow-blue-600/20"
+              className="min-h-[44px] px-5 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shadow-blue-600/20 cursor-pointer"
             >
               <Check className="w-4 h-4 text-emerald-300" />
               <span>Save Name</span>
             </button>
 
             {saveMessage && (
-              <span className="text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl animate-fadeIn">
+              <span className="text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl">
                 {saveMessage}
               </span>
             )}
           </div>
         </div>
-      </div>
-
-      {/* 3. WINDOWS DUAL-MONITOR & PROJECTOR SETUP GUIDE */}
-      <div className="bg-white border border-slate-200/90 rounded-2xl p-6 sm:p-7 shadow-sm space-y-4">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Monitor className="w-4 h-4 text-emerald-600" />
-            Windows PC &amp; Projector Setup Instructions
-          </h3>
-          <span className="text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-            Local Media Appliance
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/90 space-y-2">
-            <div className="font-bold text-slate-900 flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5 text-blue-600" />
-              1. Windows Startup Batch Script
-            </div>
-            <p className="text-slate-600 leading-relaxed font-medium">
-              Run <code>start-theater.bat</code> located in your application root folder. It starts the local server and opens the clean zero-bezel Projector Screen on your connected projector in kiosk mode.
-            </p>
-          </div>
-
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-200/90 space-y-2">
-            <div className="font-bold text-slate-900 flex items-center gap-1.5">
-              <Monitor className="w-3.5 h-3.5 text-emerald-600" />
-              2. Dual-Monitor Display Setup
-            </div>
-            <p className="text-slate-600 leading-relaxed font-medium">
-              Press <code>Win + P</code> on Windows and select <strong>Extend</strong>. Move the Projector window to the projector screen and press <strong>F11</strong> for a seamless theatrical presentation.
-            </p>
-          </div>
-        </div>
-
-        {/* 3. POWERSHELL DOWNLOAD & INSTALLATION FROM GITHUB */}
-        <div className="p-4 bg-slate-900 text-slate-100 rounded-xl space-y-2 text-xs">
-          <div className="flex items-center justify-between">
-            <span className="font-bold flex items-center gap-1.5 text-blue-400">
-              <DownloadCloud className="w-4 h-4 text-emerald-400" />
-              Automated PowerShell Installer (From Your GitHub)
-            </span>
-            <button
-              onClick={() => {
-                const cmd = `irm "https://raw.githubusercontent.com/<YOUR_USER>/<YOUR_REPO>/main/install-cinemabooth.ps1" | iex`;
-                navigator.clipboard.writeText(cmd);
-                setCopiedScript(true);
-                setTimeout(() => setCopiedScript(false), 2500);
-              }}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] flex items-center gap-1.5 transition-colors border border-slate-700"
-            >
-              {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-              <span>{copiedScript ? 'Copied Command!' : 'Copy Command'}</span>
-            </button>
-          </div>
-          <p className="text-slate-400 text-[11px] font-medium leading-relaxed">
-            Run this in Windows PowerShell on your media PC. It automatically clones the repository, installs Node.js, runs npm install, checks for FFmpeg/yt-dlp, and places a launcher shortcut on your Desktop.
-          </p>
-          <div className="p-2.5 bg-black/60 rounded-lg font-mono text-[11px] text-emerald-400 select-all overflow-x-auto border border-slate-800">
-            git clone &lt;YOUR_GITHUB_REPO_URL&gt; CinemaBooth ; cd CinemaBooth ; .\install-cinemabooth.ps1
-          </div>
-        </div>
 
         {/* Database Notice */}
-        <div className="p-4 bg-blue-50/70 rounded-xl border border-blue-200/80 flex items-center justify-between text-xs">
+        <div className="p-4 bg-blue-50/70 rounded-xl border border-blue-200/80 flex items-center justify-between text-xs mt-4">
           <div className="flex items-center gap-2 text-slate-700">
             <Database className="w-4 h-4 text-blue-600 shrink-0" />
             <div>
               <span className="font-bold text-slate-900">Relational SQLite Database: </span>
-              <span className="text-slate-600 font-medium">Backed by binary database file <code>./data/theater.db</code> (ACID relational persistence)</span>
+              <span className="text-slate-600 font-medium">
+                Backed by binary database file <code>./data/theater.db</code> (ACID relational persistence)
+              </span>
             </div>
           </div>
-          <span className="text-emerald-700 font-mono font-bold text-[11px] bg-white border border-emerald-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
-            SQL Active
-          </span>
+          <span className="text-emerald-700 font-mono font-bold text-[11px]">SQL Active</span>
         </div>
       </div>
     </div>

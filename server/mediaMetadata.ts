@@ -8,6 +8,8 @@ export interface MediaMetadata {
   format: string;
   isCompatible: boolean;
   fileSize: number;
+  audioChannels: number;
+  audioLayout: string;
 }
 
 /**
@@ -40,13 +42,13 @@ function findExecutable(binName: string): string {
 /**
  * Probe media file using ffprobe
  */
-function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolution: string } | null> {
+function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolution: string; audioChannels: number; audioLayout: string } | null> {
   return new Promise((resolve) => {
     try {
       const ffprobeBin = findExecutable('ffprobe');
       const proc = spawn(ffprobeBin, [
         '-v', 'error',
-        '-show_entries', 'format=duration:stream=width,height',
+        '-show_entries', 'format=duration:stream=codec_type,width,height,channels,channel_layout',
         '-of', 'json',
         filePath,
       ]);
@@ -72,15 +74,32 @@ function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolut
             }
 
             let resolution = '1920x1080';
+            let audioChannels = 2;
+            let audioLayout = '2.0 Stereo';
+
             if (Array.isArray(data.streams)) {
               const videoStream = data.streams.find((s: any) => s.width && s.height);
               if (videoStream) {
                 resolution = `${videoStream.width}x${videoStream.height}`;
               }
+              const audioStream = data.streams.find((s: any) => s.codec_type === 'audio' || typeof s.channels === 'number');
+              if (audioStream && typeof audioStream.channels === 'number') {
+                audioChannels = audioStream.channels;
+                if (audioChannels >= 8) {
+                  audioLayout = '7.1 Surround';
+                } else if (audioChannels >= 6 || String(audioStream.channel_layout || '').includes('5.1')) {
+                  audioChannels = 6;
+                  audioLayout = '5.1 Surround';
+                } else if (audioChannels === 1) {
+                  audioLayout = '1.0 Mono';
+                } else {
+                  audioLayout = '2.0 Stereo';
+                }
+              }
             }
 
             if (duration > 0) {
-              resolve({ duration: Math.round(duration * 100) / 100, resolution });
+              resolve({ duration: Math.round(duration * 100) / 100, resolution, audioChannels, audioLayout });
               return;
             }
           } catch {}
@@ -101,7 +120,7 @@ function probeWithFfprobe(filePath: string): Promise<{ duration: number; resolut
 /**
  * Fallback probe using ffmpeg -i stderr
  */
-function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resolution: string } | null> {
+function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resolution: string; audioChannels: number; audioLayout: string } | null> {
   return new Promise((resolve) => {
     try {
       const ffmpegBin = findExecutable('ffmpeg');
@@ -120,6 +139,8 @@ function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resoluti
         clearTimeout(timer);
         let duration = 0;
         let resolution = '1920x1080';
+        let audioChannels = 2;
+        let audioLayout = '2.0 Stereo';
 
         // Parse: Duration: 00:02:15.34
         const durMatch = stderr.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
@@ -136,8 +157,17 @@ function probeWithFfmpeg(filePath: string): Promise<{ duration: number; resoluti
           resolution = `${resMatch[1]}x${resMatch[2]}`;
         }
 
+        // Parse: Audio: ... 5.1(side) or 6 channels
+        if (/Audio:.*?(5\.1|6 channels)/i.test(stderr)) {
+          audioChannels = 6;
+          audioLayout = '5.1 Surround';
+        } else if (/Audio:.*?(7\.1|8 channels)/i.test(stderr)) {
+          audioChannels = 8;
+          audioLayout = '7.1 Surround';
+        }
+
         if (duration > 0) {
-          resolve({ duration: Math.round(duration * 100) / 100, resolution });
+          resolve({ duration: Math.round(duration * 100) / 100, resolution, audioChannels, audioLayout });
         } else {
           resolve(null);
         }
@@ -269,12 +299,18 @@ export async function extractMediaMetadata(filePath: string): Promise<MediaMetad
 
   // 3. Fallback to pure MP4 binary parser (scans head and tail)
   if ((!probe || probe.duration <= 0) && ['mp4', 'm4v', 'mov'].includes(cleanFormat)) {
-    probe = probeMp4Binary(filePath);
+    const mp4Probe = probeMp4Binary(filePath);
+    if (mp4Probe) {
+      probe = { ...mp4Probe, audioChannels: 2, audioLayout: '2.0 Stereo' };
+    }
   }
 
   // 4. Fallback to pure Matroska / WebM binary parser
   if ((!probe || probe.duration <= 0) && ['mkv', 'webm'].includes(cleanFormat)) {
-    probe = probeMatroskaBinary(filePath);
+    const mkvProbe = probeMatroskaBinary(filePath);
+    if (mkvProbe) {
+      probe = { ...mkvProbe, audioChannels: 6, audioLayout: '5.1 Surround' };
+    }
   }
 
   // 5. Intelligent duration resolution:
@@ -286,6 +322,8 @@ export async function extractMediaMetadata(filePath: string): Promise<MediaMetad
   }
 
   const resolution = probe?.resolution || '1920x1080';
+  const audioChannels = probe?.audioChannels || (/5\.1|surround|ac3|dts/i.test(path.basename(filePath)) ? 6 : 2);
+  const audioLayout = probe?.audioLayout || (audioChannels >= 6 ? '5.1 Surround' : '2.0 Stereo');
 
   return {
     duration,
@@ -293,5 +331,7 @@ export async function extractMediaMetadata(filePath: string): Promise<MediaMetad
     format: cleanFormat,
     isCompatible,
     fileSize,
+    audioChannels,
+    audioLayout,
   };
 }

@@ -1,0 +1,6 @@
+{
+  "summary":  "Updated implementation plan guaranteeing seamless Dual-Mode operation: the standard Web Browser Projector Screen (/?mode=screen) remains 100% functional for testing alongside the native Linux Mini PC Appliance (.deb) for production.",
+  "updatedAt":  "2026-10-23T14:27:32.968720052Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

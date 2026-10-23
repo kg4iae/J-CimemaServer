@@ -141,19 +141,49 @@ export async function fetchSpotifyState(): Promise<any> {
   return res.json();
 }
 
+export async function fetchSpotifyToken(): Promise<{
+  accessToken: string;
+  deviceName: string;
+  clientId: string;
+  hasToken: boolean;
+}> {
+  const res = await fetch(`${API_BASE}/spotify/token`);
+  return res.json();
+}
+
+export async function saveSpotifyToken(payload: {
+  code?: string;
+  codeVerifier?: string;
+  redirectUri?: string;
+  clientId?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  deviceName?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/spotify/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
 export async function controlSpotify(
-  action: 'play' | 'pause' | 'toggle' | 'launch',
+  action: 'play' | 'pause' | 'toggle' | 'volume' | 'status_sync' | 'launch',
   track?: string,
   artist?: string,
-  uri?: string
+  volume?: number,
+  extra?: { connected?: boolean; deviceName?: string; isPlaying?: boolean }
 ): Promise<any> {
   const res = await fetch(`${API_BASE}/spotify/action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, track, artist, uri }),
+    body: JSON.stringify({ action, track, artist, volume, ...extra }),
   });
   return res.json();
 }
+
 
 export async function updateMediaDuration(
   id: string,
@@ -273,4 +303,18 @@ export async function controlKaraoke(
   });
   return res.json();
 }
+
+export async function sendApplianceCommand(
+  action: 'speaker_test_51' | 'restart_kiosk' | 'restart_spotify' | 'mute_mic' | 'unmute_mic',
+  channel?: 'all' | 'fl' | 'c' | 'fr' | 'sl' | 'sr' | 'lfe',
+  volume?: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await fetch(`${API_BASE}/appliance/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, channel, volume }),
+  });
+  return res.json();
+}
+
 

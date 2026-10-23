@@ -1,4 +1,4 @@
-name: Build and Publish Docker Container
+name: Build Docker Container and Projector .deb Package
 
 on:
   push:
@@ -65,3 +65,44 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  build-projector-deb:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build cinemabooth-projector_1.0.0_amd64.deb
+        run: |
+          npx tsx -e "
+            import fs from 'node:fs';
+            import { buildProjectorDebPackage } from './server/debBuilder.ts';
+            const buf = buildProjectorDebPackage({
+              serverUrl: 'http://cinemabooth.local:3000',
+              deviceName: 'CinemaBooth Projector',
+              audioProfile: 'optical-51-ac3',
+              spdifCard: '0',
+              resolution: 'auto',
+              theaterName: 'Grand Majestic Cinema'
+            });
+            fs.writeFileSync('cinemabooth-projector_1.0.0_amd64.deb', buf);
+          "
+          dpkg-deb --info cinemabooth-projector_1.0.0_amd64.deb
+          dpkg-deb --contents cinemabooth-projector_1.0.0_amd64.deb
+
+      - name: Upload Projector .deb Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinemabooth-projector-amd64-deb
+          path: cinemabooth-projector_1.0.0_amd64.deb
