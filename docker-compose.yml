@@ -1,0 +1,17 @@
+services:
+  cinemabooth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/lazeria/cinemabooth:latest
+    container_name: cinemabooth
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
+      - ./public/assets:/app/public/assets
