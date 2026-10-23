@@ -158,7 +158,15 @@ function initSchema(db: SqlJsDatabase) {
       ('spotify_auto_resume', 'true'),
       ('preshow_music_mode', 'ambient'),
       ('active_slideshow_id', 'ss_general_preshow'),
-      ('preshow_display_mode', 'slideshow')
+      ('preshow_display_mode', 'slideshow'),
+      ('karaoke_code', ''),
+      ('karaoke_active', 'false')
+    `);
+  } else {
+    db.run(`
+      INSERT OR IGNORE INTO settings (key, value) VALUES
+      ('karaoke_code', ''),
+      ('karaoke_active', 'false')
     `);
   }
 

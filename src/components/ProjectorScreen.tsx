@@ -3,7 +3,6 @@ import { Volume2, VolumeX, Music, Sparkles } from 'lucide-react';
 import { PlaybackState, Playlist, PlaylistItem, TheaterSettings, Slideshow, SlideshowSlide } from '../types/theater';
 import { fetchPlaylists, fetchSettings, syncPlaybackProgress, fetchSlideshows } from '../services/api';
 import { preshowAudio } from '../services/preshowAudio';
-import { getSpotifyEmbedUrl } from '../utils/spotify';
 
 export default function ProjectorScreen() {
   const [playback, setPlayback] = useState<PlaybackState>({
@@ -53,8 +52,8 @@ export default function ProjectorScreen() {
   // Synchronize Pre-Show Walk-In Audio engine with theater state
   useEffect(() => {
     preshowAudio.syncState({
-      isPlaylistPlaying: playback.isPlaying,
-      spotifyPlaying: playback.spotifyPlaying,
+      isPlaylistPlaying: playback.isPlaying || Boolean(playback.karaokeActive),
+      spotifyPlaying: playback.spotifyPlaying && !playback.karaokeActive,
       volume: playback.volume,
       isMuted: playback.isMuted,
       preshowMusicMode: settings.preshow_music_mode,
@@ -62,6 +61,7 @@ export default function ProjectorScreen() {
     });
   }, [
     playback.isPlaying,
+    playback.karaokeActive,
     playback.spotifyPlaying,
     playback.volume,
     playback.isMuted,
@@ -125,6 +125,21 @@ export default function ProjectorScreen() {
             } else if (action === 'mute') {
               videoRef.current.muted = playbackState.isMuted;
             }
+          }
+        } else if (payload.type === 'KARAOKE_STATE') {
+          setPlayback((prev) => ({
+            ...prev,
+            karaokeActive: payload.data.karaokeActive,
+            karaokeCode: payload.data.karaokeCode ?? prev.karaokeCode,
+            micMuted: payload.data.micMuted ?? prev.micMuted,
+            isPlaying: payload.data.karaokeActive ? false : prev.isPlaying,
+          }));
+          if (payload.data.karaokeActive && videoRef.current) {
+            videoRef.current.pause();
+            videoRef.current.currentTime = 0;
+          }
+          if (!payload.data.karaokeActive) {
+            setCurrentSlideIndex(0);
           }
         } else if (payload.type === 'ITEM_CHANGED') {
           setPlayback(payload.data);
@@ -213,11 +228,9 @@ export default function ProjectorScreen() {
   const slideDurationSec = activeSlideshow?.slide_duration || 15.0;
 
   // Pre-show Slideshow rotation timer:
-  // "These should play in alpha-numeric order and repeat until the Playlist starts.
-  // I would like each slide to stay for about 15 seconds."
+  // Only cycle slides when presentation is NOT playing and NOT in Karaoke mode
   useEffect(() => {
-    // Only cycle slides when presentation is NOT playing
-    if (playback.isPlaying || slides.length === 0) {
+    if (playback.isPlaying || playback.karaokeActive || slides.length === 0) {
       return;
     }
 
@@ -227,7 +240,7 @@ export default function ProjectorScreen() {
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [playback.isPlaying, slides.length, slideDurationSec]);
+  }, [playback.isPlaying, playback.karaokeActive, slides.length, slideDurationSec]);
 
   // Fullscreen trigger (double click anywhere)
   const toggleFullscreen = () => {
@@ -238,19 +251,40 @@ export default function ProjectorScreen() {
     }
   };
 
-  const isVideoItem = currentItem?.item_type === 'media' && playback.isPlaying;
+  const isKaraokeMode = Boolean(playback.karaokeActive);
+  const activeKaraokeCode = (playback.karaokeCode || settings.karaoke_code || '').trim();
+  const karaokePresentationUrl = `https://k2.lazeria.com/p?code=${encodeURIComponent(activeKaraokeCode)}`;
+
+  const isVideoItem = !isKaraokeMode && currentItem?.item_type === 'media' && playback.isPlaying;
   const logoSource = settings.logo_url || '/assets/theater_logo.svg';
   const currentSlide = slides[currentSlideIndex % Math.max(1, slides.length)];
 
   return (
     <div
-      onClick={() => preshowAudio.unlockAudio()}
+      onClick={() => {
+        if (!isKaraokeMode) {
+          preshowAudio.unlockAudio();
+        }
+      }}
       onDoubleClick={toggleFullscreen}
       className="relative w-screen h-screen bg-black overflow-hidden select-none cursor-default flex items-center justify-center"
       title="CinemaBooth Projector View (Click anywhere for Audio • Double-click or F11 for Fullscreen)"
     >
-      {/* Autoplay unlock prompt (only shown if browser suspended audio playback) */}
-      {isAutoplayBlocked && !isVideoItem && playback.spotifyPlaying && (
+      {/* 0. KARAOKE PRESENTATION MODE (Full-screen https://k2.lazeria.com/p?code=xxxx) */}
+      {isKaraokeMode && (
+        <div className="absolute inset-0 z-50 w-full h-full bg-black flex flex-col">
+          <iframe
+            key={karaokePresentationUrl}
+            src={karaokePresentationUrl}
+            title="Karaoke Presentation Screen"
+            allow="microphone; autoplay; fullscreen; camera; display-capture"
+            className="w-full h-full border-0 bg-black"
+          />
+        </div>
+      )}
+
+      {/* Autoplay unlock prompt (only shown if browser suspended audio playback in Cinema mode) */}
+      {!isKaraokeMode && isAutoplayBlocked && !isVideoItem && playback.spotifyPlaying && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -266,7 +300,7 @@ export default function ProjectorScreen() {
       )}
 
       {/* Pre-show audio status monitor in bottom-left */}
-      {!isVideoItem && (
+      {!isKaraokeMode && !isVideoItem && (
         <div className="absolute bottom-3 left-4 z-40 flex items-center gap-2 text-[11px] text-white/50 font-mono tracking-wider opacity-60 hover:opacity-100 transition-opacity pointer-events-none">
           <Music className="w-3.5 h-3.5 text-cyan-400" />
           <span>
@@ -286,9 +320,8 @@ export default function ProjectorScreen() {
         </div>
       )}
 
-     
-      {/* 1. STANDBY / PRE-SHOW DISPLAY (Shown when not playing video) */}
-      {!isVideoItem && (
+      {/* 1. STANDBY / PRE-SHOW DISPLAY (Shown when not playing video and not in Karaoke mode) */}
+      {!isKaraokeMode && !isVideoItem && (
         <div className="absolute inset-0 flex items-center justify-center w-full h-full bg-[#050608] transition-opacity duration-1000">
           {/* If an active slideshow with slides is selected, display the looping pre-show slideshow */}
           {slides.length > 0 && activeShowId !== 'none' ? (
@@ -349,3 +382,4 @@ export default function ProjectorScreen() {
     </div>
   );
 }
+

@@ -55,14 +55,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Video container extensions that the library scanner will register
-const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts', '.mpg', '.mpeg'];
-
-// Unique media id (Date.now() + small random can collide when many files are inserted in one scan)
-let mediaIdCounter = 0;
-function newMediaId(): string {
-  mediaIdCounter = (mediaIdCounter + 1) % 1000000;
-  return `media_${Date.now()}_${mediaIdCounter}_${Math.floor(Math.random() * 1000)}`;
+// Helper to safely escape single quotes (') when writing or querying SQLite
+function sqlEscape(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  return String(val).replace(/'/g, "''");
 }
 
 // Helper function to resolve accurate MIME types for video, audio, and images
@@ -77,8 +73,6 @@ function getMimeType(filename: string): string {
     case '.flac': return 'audio/flac';
     case '.webm': return 'video/webm';
     case '.mp4': return 'video/mp4';
-    case '.mpg':
-    case '.mpeg': return 'video/mpeg';
     case '.jpg':
     case '.jpeg': return 'image/jpeg';
     case '.png': return 'image/png';
@@ -89,8 +83,16 @@ function getMimeType(filename: string): string {
 
 // Serve static media files with HTTP 206 Partial Content support for smooth audio/video streaming
 app.get('/media/:filename', (req: Request, res: Response): void => {
-  const filename = req.params.filename;
-  const filePath = path.join(MEDIA_DIR, filename);
+  const rawParam = req.params.filename;
+  let filename = rawParam;
+  try {
+    filename = decodeURIComponent(rawParam);
+  } catch {}
+  let filePath = path.join(MEDIA_DIR, filename);
+
+  if (!fs.existsSync(filePath) && fs.existsSync(path.join(MEDIA_DIR, rawParam))) {
+    filePath = path.join(MEDIA_DIR, rawParam);
+  }
 
   if (!fs.existsSync(filePath)) {
     res.status(404).json({ error: 'Media file not found' });
@@ -137,12 +139,12 @@ app.post('/api/preshow/audio/upload', upload.single('audio'), async (req: Reques
     const originalName = req.file.originalname;
     const db = await getDatabase();
     db.run(`
-      INSERT INTO settings (key, value) VALUES ('preshow_audio_url', '${publicAudioPath}')
-      ON CONFLICT(key) DO UPDATE SET value = '${publicAudioPath}'
+      INSERT INTO settings (key, value) VALUES ('preshow_audio_url', '${sqlEscape(publicAudioPath)}')
+      ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(publicAudioPath)}'
     `);
     db.run(`
-      INSERT INTO settings (key, value) VALUES ('preshow_audio_name', '${originalName.replace(/'/g, "''")}')
-      ON CONFLICT(key) DO UPDATE SET value = '${originalName.replace(/'/g, "''")}'
+      INSERT INTO settings (key, value) VALUES ('preshow_audio_name', '${sqlEscape(originalName)}')
+      ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(originalName)}'
     `);
     db.run(`
       INSERT INTO settings (key, value) VALUES ('preshow_music_mode', 'custom_audio')
@@ -181,6 +183,9 @@ interface RuntimePlaybackState {
   spotifyArtist: string;
   activeCue: string | null;
   activeSlideshowId: string;
+  karaokeActive: boolean;
+  karaokeCode: string;
+  micMuted: boolean;
   lastAction: string;
 }
 
@@ -197,6 +202,9 @@ const playbackState: RuntimePlaybackState = {
   spotifyArtist: 'Grand Cinema Ensemble',
   activeCue: null,
   activeSlideshowId: 'ss_general_preshow',
+  karaokeActive: false,
+  karaokeCode: '',
+  micMuted: false,
   lastAction: 'init',
 };
 
@@ -521,8 +529,8 @@ app.post('/api/logo/upload', upload.single('logo'), async (req: Request, res: Re
     const publicLogoPath = `/media/${req.file.filename}`;
     const db = await getDatabase();
     db.run(`
-      INSERT INTO settings (key, value) VALUES ('logo_url', '${publicLogoPath}')
-      ON CONFLICT(key) DO UPDATE SET value = '${publicLogoPath}'
+      INSERT INTO settings (key, value) VALUES ('logo_url', '${sqlEscape(publicLogoPath)}')
+      ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(publicLogoPath)}'
     `);
     saveDatabase();
     broadcast('LOGO_UPDATED', { logoUrl: publicLogoPath });
@@ -557,7 +565,7 @@ app.get('/api/playlists', async (req: Request, res: Response) => {
         FROM playlist_items pi
         LEFT JOIN media_items mi ON pi.media_id = mi.id
         LEFT JOIN automation_cues ac ON pi.cue_id = ac.id
-        WHERE pi.playlist_id = '${pl.id}'
+        WHERE pi.playlist_id = '${sqlEscape(pl.id)}'
         ORDER BY pi.sort_order ASC
       `);
 
@@ -597,7 +605,7 @@ app.post('/api/playlists', async (req: Request, res: Response): Promise<void> =>
 
     db.run(`
       INSERT INTO playlists (id, title, description, created_at, updated_at)
-      VALUES ('${id}', '${title.replace(/'/g, "''")}', '${(description || '').replace(/'/g, "''")}', '${now}', '${now}')
+      VALUES ('${sqlEscape(id)}', '${sqlEscape(title)}', '${sqlEscape(description || '')}', '${sqlEscape(now)}', '${sqlEscape(now)}')
     `);
 
     if (Array.isArray(items)) {
@@ -606,15 +614,15 @@ app.post('/api/playlists', async (req: Request, res: Response): Promise<void> =>
         db.run(`
           INSERT INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing)
           VALUES (
-            '${itemId}',
-            '${id}',
+            '${sqlEscape(itemId)}',
+            '${sqlEscape(id)}',
             ${idx + 1},
-            '${(item.item_type || 'media').replace(/'/g, "''")}',
-            '${(item.title || 'Untitled Item').replace(/'/g, "''")}',
-            ${item.media_id ? `'${item.media_id}'` : 'NULL'},
-            ${item.cue_id ? `'${item.cue_id}'` : 'NULL'},
+            '${sqlEscape(item.item_type || 'media')}',
+            '${sqlEscape(item.title || 'Untitled Item')}',
+            ${item.media_id ? `'${sqlEscape(item.media_id)}'` : 'NULL'},
+            ${item.cue_id ? `'${sqlEscape(item.cue_id)}'` : 'NULL'},
             ${Number(item.duration) || 0},
-            '${item.cue_timing || 'before'}'
+            '${sqlEscape(item.cue_timing || 'before')}'
           )
         `);
       });
@@ -637,28 +645,28 @@ app.put('/api/playlists/:id', async (req: Request, res: Response) => {
 
     db.run(`
       UPDATE playlists 
-      SET title = '${(title || '').replace(/'/g, "''")}', 
-          description = '${(description || '').replace(/'/g, "''")}',
-          updated_at = '${now}'
-      WHERE id = '${id}'
+      SET title = '${sqlEscape(title || '')}', 
+          description = '${sqlEscape(description || '')}',
+          updated_at = '${sqlEscape(now)}'
+      WHERE id = '${sqlEscape(id)}'
     `);
 
     if (Array.isArray(items)) {
-      db.run(`DELETE FROM playlist_items WHERE playlist_id = '${id}'`);
+      db.run(`DELETE FROM playlist_items WHERE playlist_id = '${sqlEscape(id)}'`);
       items.forEach((item: any, idx: number) => {
         const itemId = item.id || `pli_${Date.now()}_${idx}`;
         db.run(`
           INSERT INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing)
           VALUES (
-            '${itemId}',
-            '${id}',
+            '${sqlEscape(itemId)}',
+            '${sqlEscape(id)}',
             ${idx + 1},
-            '${(item.item_type || 'media').replace(/'/g, "''")}',
-            '${(item.title || 'Untitled Item').replace(/'/g, "''")}',
-            ${item.media_id ? `'${item.media_id}'` : 'NULL'},
-            ${item.cue_id ? `'${item.cue_id}'` : 'NULL'},
+            '${sqlEscape(item.item_type || 'media')}',
+            '${sqlEscape(item.title || 'Untitled Item')}',
+            ${item.media_id ? `'${sqlEscape(item.media_id)}'` : 'NULL'},
+            ${item.cue_id ? `'${sqlEscape(item.cue_id)}'` : 'NULL'},
             ${Number(item.duration) || 0},
-            '${item.cue_timing || 'before'}'
+            '${sqlEscape(item.cue_timing || 'before')}'
           )
         `);
       });
@@ -676,8 +684,8 @@ app.delete('/api/playlists/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = await getDatabase();
-    db.run(`DELETE FROM playlist_items WHERE playlist_id = '${id}'`);
-    db.run(`DELETE FROM playlists WHERE id = '${id}'`);
+    db.run(`DELETE FROM playlist_items WHERE playlist_id = '${sqlEscape(id)}'`);
+    db.run(`DELETE FROM playlists WHERE id = '${sqlEscape(id)}'`);
     saveDatabase();
     broadcast('PLAYLISTS_UPDATED', { id });
     res.json({ success: true });
@@ -714,8 +722,8 @@ app.get('/api/media', async (req: Request, res: Response) => {
         validMedia.push(item);
       } else {
         // Physical file does not exist on disk! Prune it from database
-        db.run(`DELETE FROM media_items WHERE id = '${item.id}'`);
-        db.run(`DELETE FROM playlist_items WHERE media_id = '${item.id}'`);
+        db.run(`DELETE FROM media_items WHERE id = '${sqlEscape(item.id)}'`);
+        db.run(`DELETE FROM playlist_items WHERE media_id = '${sqlEscape(item.id)}'`);
         hasPruned = true;
       }
     }
@@ -747,20 +755,21 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
     const meta = await extractMediaMetadata(filePath);
     const id = `media_${Date.now()}`;
     const cleanTitle = path.parse(file.originalname).name;
+    const publicFilePath = `/media/${encodeURIComponent(file.filename)}`;
 
     const db = await getDatabase();
     db.run(`
       INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
       VALUES (
-        '${id}',
-        '${cleanTitle.replace(/'/g, "''")}',
-        '${file.filename}',
-        '${file.originalname.replace(/'/g, "''")}',
-        '/media/${file.filename}',
+        '${sqlEscape(id)}',
+        '${sqlEscape(cleanTitle)}',
+        '${sqlEscape(file.filename)}',
+        '${sqlEscape(file.originalname)}',
+        '${sqlEscape(publicFilePath)}',
         ${meta.fileSize || file.size},
         ${meta.duration},
-        '${meta.resolution}',
-        '${meta.format}',
+        '${sqlEscape(meta.resolution)}',
+        '${sqlEscape(meta.format)}',
         ${meta.isCompatible ? 1 : 0},
         '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
         ${meta.isCompatible ? 100 : 0},
@@ -791,10 +800,9 @@ app.post('/api/media/upload', upload.single('video'), async (req: Request, res: 
 app.post('/api/media/scan', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = VIDEO_EXTENSIONS;
-    const failedFiles: { filename: string; error: string }[] = [];
+    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
     const db = await getDatabase();
-
+    
     // 1. Prune database records for files that were deleted from disk
     const existing = db.exec('SELECT id, filename, duration, resolution, file_size FROM media_items');
     let prunedCount = 0;
@@ -806,20 +814,20 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
         const id = row[0] as string;
         const fn = (row[1] as string) || '';
         const dur = Number(row[2]) || 0;
-        const res = (row[3] as string) || '';
+        const resStr = (row[3] as string) || '';
         const size = Number(row[4]) || 0;
 
         const cleanName = path.basename(fn);
         const filePath = path.join(MEDIA_DIR, cleanName);
         if (!fs.existsSync(filePath)) {
           // File was deleted from disk!
-          db.run(`DELETE FROM media_items WHERE id = '${id}'`);
-          db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+          db.run(`DELETE FROM media_items WHERE id = '${sqlEscape(id)}'`);
+          db.run(`DELETE FROM playlist_items WHERE media_id = '${sqlEscape(id)}'`);
           prunedCount++;
         } else {
-          existingMap.set(cleanName, { id, duration: dur, resolution: res, file_size: size });
+          existingMap.set(cleanName, { id, duration: dur, resolution: resStr, file_size: size });
           if (fn !== cleanName) {
-            existingMap.set(fn, { id, duration: dur, resolution: res, file_size: size });
+            existingMap.set(fn, { id, duration: dur, resolution: resStr, file_size: size });
           }
         }
       }
@@ -828,71 +836,70 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
     // 2. Scan physical directory, probe real metadata for new files and fix inaccurate runtimes
     let scannedCount = 0;
     for (const filename of files) {
-      const ext = path.extname(filename).toLowerCase();
-      if (!videoExtensions.includes(ext)) continue;
-
       try {
-      const filePath = path.join(MEDIA_DIR, filename);
-      const stat = fs.statSync(filePath);
-      const meta = await extractMediaMetadata(filePath);
+        const ext = path.extname(filename).toLowerCase();
+        if (!videoExtensions.includes(ext)) continue;
 
-      if (!existingMap.has(filename)) {
-        // New file: insert with REAL runtime duration and resolution
-        // (parameterized so filenames containing quotes can't break the SQL)
-        const id = newMediaId();
-        const title = path.parse(filename).name;
+        const filePath = path.join(MEDIA_DIR, filename);
+        const stat = fs.statSync(filePath);
+        const meta = await extractMediaMetadata(filePath);
+        const publicFilePath = `/media/${encodeURIComponent(filename)}`;
 
-        db.run(
-          `INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-          [
-            id,
-            title,
-            filename,
-            filename,
-            `/media/${filename}`,
-            meta.fileSize || stat.size,
-            meta.duration,
-            meta.resolution,
-            meta.format,
-            meta.isCompatible ? 1 : 0,
-            meta.isCompatible ? 'ready' : 'needs_conversion',
-            meta.isCompatible ? 100 : 0,
-          ]
-        );
-        scannedCount++;
-      } else {
-        // Existing file: update runtime and resolution if it had hardcoded or inaccurate values
-        const current = existingMap.get(filename)!;
-        if (
-          Math.abs(current.duration - meta.duration) > 0.5 ||
-          current.resolution !== meta.resolution ||
-          current.duration === 180 ||
-          current.duration === 120 ||
-          current.duration <= 0
-        ) {
+        if (!existingMap.has(filename)) {
+          // New file: insert with REAL runtime duration and resolution and escaped single quotes
+          const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const title = path.parse(filename).name;
+
           db.run(`
-            UPDATE media_items
-            SET duration = ${meta.duration},
-                resolution = '${meta.resolution}',
-                file_size = ${meta.fileSize || stat.size},
-                format = '${meta.format}',
-                is_compatible = ${meta.isCompatible ? 1 : 0}
-            WHERE id = '${current.id}'
+            INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+            VALUES (
+              '${sqlEscape(id)}',
+              '${sqlEscape(title)}',
+              '${sqlEscape(filename)}',
+              '${sqlEscape(filename)}',
+              '${sqlEscape(publicFilePath)}',
+              ${meta.fileSize || stat.size},
+              ${meta.duration},
+              '${sqlEscape(meta.resolution)}',
+              '${sqlEscape(meta.format)}',
+              ${meta.isCompatible ? 1 : 0},
+              '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
+              ${meta.isCompatible ? 100 : 0},
+              datetime('now')
+            )
           `);
-          // Also update any playlist items referencing this media
-          db.run(`
-            UPDATE playlist_items
-            SET duration = ${meta.duration}
-            WHERE media_id = '${current.id}'
-          `);
-          refreshedCount++;
+          scannedCount++;
+        } else {
+          // Existing file: update runtime and resolution if it had hardcoded or inaccurate values
+          const current = existingMap.get(filename)!;
+          if (
+            Math.abs(current.duration - meta.duration) > 0.5 ||
+            current.resolution !== meta.resolution ||
+            current.duration === 180 ||
+            current.duration === 120 ||
+            current.duration <= 0
+          ) {
+            db.run(`
+              UPDATE media_items
+              SET duration = ${meta.duration},
+                  resolution = '${sqlEscape(meta.resolution)}',
+                  file_size = ${meta.fileSize || stat.size},
+                  format = '${sqlEscape(meta.format)}',
+                  file_path = '${sqlEscape(publicFilePath)}',
+                  is_compatible = ${meta.isCompatible ? 1 : 0}
+              WHERE id = '${sqlEscape(current.id)}'
+            `);
+            // Also update any playlist items referencing this media
+            db.run(`
+              UPDATE playlist_items
+              SET duration = ${meta.duration}
+              WHERE media_id = '${sqlEscape(current.id)}'
+            `);
+            refreshedCount++;
+          }
         }
-      }
-      } catch (fileErr: any) {
-        // One bad file must not abort the whole scan
-        console.error(`Scan: failed to process ${filename}:`, fileErr);
-        failedFiles.push({ filename, error: fileErr?.message || String(fileErr) });
+      } catch (fileErr) {
+        console.warn(`Error scanning media file "${filename}":`, fileErr);
       }
     }
 
@@ -909,9 +916,8 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
       newFilesCount: scannedCount,
       prunedCount,
       refreshedCount,
-      failedFiles,
       totalFiles: files.length,
-      message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.${failedFiles.length ? ` ${failedFiles.length} file(s) failed.` : ''}`,
+      message: `Scanned folder: ${scannedCount} new files added, ${prunedCount} deleted files removed, ${refreshedCount} runtimes updated with exact durations.`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -922,9 +928,9 @@ app.post('/api/media/scan', async (req: Request, res: Response) => {
 app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
   try {
     const files = fs.readdirSync(MEDIA_DIR);
-    const videoExtensions = VIDEO_EXTENSIONS;
+    const videoExtensions = ['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.ts'];
     const db = await getDatabase();
-
+    
     // 1. Purge missing records
     const existing = db.exec('SELECT id, filename FROM media_items');
     let prunedCount = 0;
@@ -935,8 +941,8 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
         const cleanName = path.basename(fn);
         const filePath = path.join(MEDIA_DIR, cleanName);
         if (!fs.existsSync(filePath)) {
-          db.run(`DELETE FROM media_items WHERE id = '${id}'`);
-          db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+          db.run(`DELETE FROM media_items WHERE id = '${sqlEscape(id)}'`);
+          db.run(`DELETE FROM playlist_items WHERE media_id = '${sqlEscape(id)}'`);
           prunedCount++;
         }
       }
@@ -945,51 +951,57 @@ app.post('/api/media/rescan-all', async (req: Request, res: Response) => {
     // 2. Refresh metadata for all valid files
     let updatedCount = 0;
     for (const filename of files) {
-      const ext = path.extname(filename).toLowerCase();
-      if (!videoExtensions.includes(ext)) continue;
-      const filePath = path.join(MEDIA_DIR, filename);
-      const meta = await extractMediaMetadata(filePath);
+      try {
+        const ext = path.extname(filename).toLowerCase();
+        if (!videoExtensions.includes(ext)) continue;
+        const filePath = path.join(MEDIA_DIR, filename);
+        const meta = await extractMediaMetadata(filePath);
+        const publicFilePath = `/media/${encodeURIComponent(filename)}`;
 
-      const checkRes = db.exec(`SELECT id FROM media_items WHERE filename = ?`, [filename]);
-      if (checkRes[0]?.values[0]) {
-        const id = checkRes[0].values[0][0];
-        db.run(`
-          UPDATE media_items
-          SET duration = ${meta.duration},
-              resolution = '${meta.resolution}',
-              file_size = ${meta.fileSize},
-              format = '${meta.format}',
-              is_compatible = ${meta.isCompatible ? 1 : 0}
-          WHERE id = '${id}'
-        `);
-        db.run(`
-          UPDATE playlist_items
-          SET duration = ${meta.duration}
-          WHERE media_id = '${id}'
-        `);
-        updatedCount++;
-      } else {
-        const id = newMediaId();
-        const title = path.parse(filename).name;
-        db.run(
-          `INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-          [
-            id,
-            title,
-            filename,
-            filename,
-            `/media/${filename}`,
-            meta.fileSize,
-            meta.duration,
-            meta.resolution,
-            meta.format,
-            meta.isCompatible ? 1 : 0,
-            meta.isCompatible ? 'ready' : 'needs_conversion',
-            meta.isCompatible ? 100 : 0,
-          ]
-        );
-        updatedCount++;
+        const checkRes = db.exec(`SELECT id FROM media_items WHERE filename = '${sqlEscape(filename)}'`);
+        if (checkRes[0]?.values[0]) {
+          const id = checkRes[0].values[0][0];
+          db.run(`
+            UPDATE media_items
+            SET duration = ${meta.duration},
+                resolution = '${sqlEscape(meta.resolution)}',
+                file_size = ${meta.fileSize},
+                format = '${sqlEscape(meta.format)}',
+                file_path = '${sqlEscape(publicFilePath)}',
+                is_compatible = ${meta.isCompatible ? 1 : 0}
+            WHERE id = '${sqlEscape(id)}'
+          `);
+          db.run(`
+            UPDATE playlist_items
+            SET duration = ${meta.duration}
+            WHERE media_id = '${sqlEscape(id)}'
+          `);
+          updatedCount++;
+        } else {
+          const id = `media_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const title = path.parse(filename).name;
+          db.run(`
+            INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
+            VALUES (
+              '${sqlEscape(id)}',
+              '${sqlEscape(title)}',
+              '${sqlEscape(filename)}',
+              '${sqlEscape(filename)}',
+              '${sqlEscape(publicFilePath)}',
+              ${meta.fileSize},
+              ${meta.duration},
+              '${sqlEscape(meta.resolution)}',
+              '${sqlEscape(meta.format)}',
+              ${meta.isCompatible ? 1 : 0},
+              '${meta.isCompatible ? 'ready' : 'needs_conversion'}',
+              ${meta.isCompatible ? 100 : 0},
+              datetime('now')
+            )
+          `);
+          updatedCount++;
+        }
+      } catch (fileErr) {
+        console.warn(`Error rescanning media file "${filename}":`, fileErr);
       }
     }
 
@@ -1016,13 +1028,13 @@ app.post('/api/media/:id/duration', async (req: Request, res: Response): Promise
     const cleanDur = Math.round(duration * 100) / 100;
     db.run(`
       UPDATE media_items 
-      SET duration = ${cleanDur} ${resolution ? `, resolution = '${resolution}'` : ''} 
-      WHERE id = '${id}'
+      SET duration = ${cleanDur} ${resolution ? `, resolution = '${sqlEscape(resolution)}'` : ''} 
+      WHERE id = '${sqlEscape(id)}'
     `);
     db.run(`
       UPDATE playlist_items 
       SET duration = ${cleanDur} 
-      WHERE media_id = '${id}'
+      WHERE media_id = '${sqlEscape(id)}'
     `);
     saveDatabase();
     broadcast('MEDIA_UPDATED', { id, duration: cleanDur });
@@ -1038,7 +1050,7 @@ app.delete('/api/media/:id', async (req: Request, res: Response): Promise<void> 
   const { id } = req.params;
   try {
     const db = await getDatabase();
-    const itemRes = db.exec(`SELECT filename FROM media_items WHERE id = '${id}'`);
+    const itemRes = db.exec(`SELECT filename FROM media_items WHERE id = '${sqlEscape(id)}'`);
     if (itemRes[0]?.values[0]) {
       const filename = itemRes[0].values[0][0] as string;
       const filePath = path.join(MEDIA_DIR, filename);
@@ -1051,8 +1063,8 @@ app.delete('/api/media/:id', async (req: Request, res: Response): Promise<void> 
       }
     }
 
-    db.run(`DELETE FROM media_items WHERE id = '${id}'`);
-    db.run(`DELETE FROM playlist_items WHERE media_id = '${id}'`);
+    db.run(`DELETE FROM media_items WHERE id = '${sqlEscape(id)}'`);
+    db.run(`DELETE FROM playlist_items WHERE media_id = '${sqlEscape(id)}'`);
     saveDatabase();
 
     broadcast('MEDIA_UPDATED', { deletedId: id });
@@ -1068,7 +1080,7 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
   const { id } = req.params;
   try {
     const db = await getDatabase();
-    const itemRes = db.exec(`SELECT * FROM media_items WHERE id = '${id}'`);
+    const itemRes = db.exec(`SELECT * FROM media_items WHERE id = '${sqlEscape(id)}'`);
     if (!itemRes[0]?.values[0]) {
       res.status(404).json({ error: 'Media item not found' });
       return;
@@ -1081,7 +1093,7 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
     const outputFilename = `converted_${path.parse(filename).name}.mp4`;
     const outputPath = path.join(MEDIA_DIR, outputFilename);
 
-    db.run(`UPDATE media_items SET conversion_status = 'converting', conversion_progress = 5 WHERE id = '${id}'`);
+    db.run(`UPDATE media_items SET conversion_status = 'converting', conversion_progress = 5 WHERE id = '${sqlEscape(id)}'`);
     saveDatabase();
     broadcast('INGESTION_PROGRESS', { id, progress: 5, status: 'converting' });
 
@@ -1110,19 +1122,19 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
       proc.on('close', async (code) => {
         clearInterval(progressTimer);
         const finalStatus = code === 0 ? 'ready' : 'failed';
-        const finalPath = code === 0 ? `/media/${outputFilename}` : `/media/${filename}`;
         const finalFilename = code === 0 ? outputFilename : filename;
+        const finalPath = `/media/${encodeURIComponent(finalFilename)}`;
 
         const updatedDb = await getDatabase();
         updatedDb.run(`
           UPDATE media_items 
-          SET conversion_status = '${finalStatus}',
+          SET conversion_status = '${sqlEscape(finalStatus)}',
               conversion_progress = 100,
               is_compatible = 1,
-              filename = '${finalFilename}',
-              file_path = '${finalPath}',
+              filename = '${sqlEscape(finalFilename)}',
+              file_path = '${sqlEscape(finalPath)}',
               format = 'mp4'
-          WHERE id = '${id}'
+          WHERE id = '${sqlEscape(id)}'
         `);
         saveDatabase();
         broadcast('INGESTION_PROGRESS', { id, progress: 100, status: finalStatus, filePath: finalPath });
@@ -1141,7 +1153,7 @@ app.post('/api/media/:id/convert', async (req: Request, res: Response): Promise<
                 conversion_progress = 100,
                 is_compatible = 1,
                 format = 'mp4'
-            WHERE id = '${id}'
+            WHERE id = '${sqlEscape(id)}'
           `);
           saveDatabase();
           broadcast('INGESTION_PROGRESS', { id, progress: 100, status: 'ready' });
@@ -1171,11 +1183,11 @@ app.post('/api/media/ytdlp', async (req: Request, res: Response): Promise<void> 
   db.run(`
     INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, is_compatible, conversion_status, conversion_progress, created_at)
     VALUES (
-      '${id}',
-      '${initialTitle.replace(/'/g, "''")}',
-      '${filename}',
-      '${url.replace(/'/g, "''")}',
-      '/media/${filename}',
+      '${sqlEscape(id)}',
+      '${sqlEscape(initialTitle)}',
+      '${sqlEscape(filename)}',
+      '${sqlEscape(url)}',
+      '/media/${sqlEscape(filename)}',
       0,
       180.0,
       '1920x1080',
@@ -1276,7 +1288,7 @@ app.get('/api/slideshows', async (req: Request, res: Response) => {
       // Order slides strictly in alpha-numeric order!
       const slidesRes = db.exec(`
         SELECT * FROM slideshow_slides 
-        WHERE slideshow_id = '${show.id}'
+        WHERE slideshow_id = '${sqlEscape(show.id)}'
         ORDER BY alpha_key ASC, sort_order ASC
       `);
       if (slidesRes[0]) {
@@ -1307,12 +1319,12 @@ app.post('/api/slideshows', async (req: Request, res: Response): Promise<void> =
     db.run(`
       INSERT INTO slideshows (id, title, description, slide_duration, created_at, updated_at)
       VALUES (
-        '${id}',
-        '${(title || 'New Pre-Show Slideshow').replace(/'/g, "''")}',
-        '${(description || '').replace(/'/g, "''")}',
+        '${sqlEscape(id)}',
+        '${sqlEscape(title || 'New Pre-Show Slideshow')}',
+        '${sqlEscape(description || '')}',
         ${duration},
-        '${now}',
-        '${now}'
+        '${sqlEscape(now)}',
+        '${sqlEscape(now)}'
       )
     `);
     saveDatabase();
@@ -1332,11 +1344,11 @@ app.put('/api/slideshows/:id', async (req: Request, res: Response) => {
     const db = await getDatabase();
     db.run(`
       UPDATE slideshows
-      SET title = '${(title || '').replace(/'/g, "''")}',
-          description = '${(description || '').replace(/'/g, "''")}',
+      SET title = '${sqlEscape(title || '')}',
+          description = '${sqlEscape(description || '')}',
           slide_duration = ${duration},
-          updated_at = '${now}'
-      WHERE id = '${id}'
+          updated_at = '${sqlEscape(now)}'
+      WHERE id = '${sqlEscape(id)}'
     `);
     saveDatabase();
     broadcast('SLIDESHOWS_UPDATED', { id });
@@ -1350,8 +1362,8 @@ app.delete('/api/slideshows/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = await getDatabase();
-    db.run(`DELETE FROM slideshow_slides WHERE slideshow_id = '${id}'`);
-    db.run(`DELETE FROM slideshows WHERE id = '${id}'`);
+    db.run(`DELETE FROM slideshow_slides WHERE slideshow_id = '${sqlEscape(id)}'`);
+    db.run(`DELETE FROM slideshows WHERE id = '${sqlEscape(id)}'`);
     saveDatabase();
     broadcast('SLIDESHOWS_UPDATED', { id });
     res.json({ success: true });
@@ -1376,18 +1388,18 @@ app.post('/api/slideshows/:id/slides', uploadSlide.single('slide'), async (req: 
     const caption = req.body.caption || path.parse(cleanFilename).name;
 
     const db = await getDatabase();
-    const countRes = db.exec(`SELECT COUNT(*) as c FROM slideshow_slides WHERE slideshow_id = '${id}'`);
+    const countRes = db.exec(`SELECT COUNT(*) as c FROM slideshow_slides WHERE slideshow_id = '${sqlEscape(id)}'`);
     const count = (countRes[0]?.values[0]?.[0] as number) || 0;
 
     db.run(`
       INSERT INTO slideshow_slides (id, slideshow_id, filename, file_path, caption, alpha_key, sort_order)
       VALUES (
-        '${slideId}',
-        '${id}',
-        '${cleanFilename.replace(/'/g, "''")}',
-        '${filePath}',
-        '${caption.replace(/'/g, "''")}',
-        '${alphaKey.replace(/'/g, "''")}',
+        '${sqlEscape(slideId)}',
+        '${sqlEscape(id)}',
+        '${sqlEscape(cleanFilename)}',
+        '${sqlEscape(filePath)}',
+        '${sqlEscape(caption)}',
+        '${sqlEscape(alphaKey)}',
         ${count + 1}
       )
     `);
@@ -1404,7 +1416,7 @@ app.delete('/api/slideshows/:id/slides/:slideId', async (req: Request, res: Resp
   try {
     const { slideId, id } = req.params;
     const db = await getDatabase();
-    db.run(`DELETE FROM slideshow_slides WHERE id = '${slideId}'`);
+    db.run(`DELETE FROM slideshow_slides WHERE id = '${sqlEscape(slideId)}'`);
     saveDatabase();
     broadcast('SLIDESHOWS_UPDATED', { id });
     res.json({ success: true });
@@ -1420,8 +1432,8 @@ app.post('/api/slideshows/active', async (req: Request, res: Response) => {
     playbackState.activeSlideshowId = slideshowId;
     const db = await getDatabase();
     db.run(`
-      INSERT INTO settings (key, value) VALUES ('active_slideshow_id', '${slideshowId}')
-      ON CONFLICT(key) DO UPDATE SET value = '${slideshowId}'
+      INSERT INTO settings (key, value) VALUES ('active_slideshow_id', '${sqlEscape(slideshowId)}')
+      ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(slideshowId)}'
     `);
     saveDatabase();
     broadcast('ACTIVE_SLIDESHOW_CHANGED', { activeSlideshowId: slideshowId });
@@ -1832,6 +1844,292 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
   res.json({ success: true, playbackState });
 });
 
+// Helper to safely pause/stop Spotify on Windows without accidentally toggling it on
+function pauseSpotifyOnWindows() {
+  if (process.platform === 'win32') {
+    try {
+      const psScript = `
+        $ErrorActionPreference = 'SilentlyContinue'
+        # Check if Spotify has an active window playing (window title contains ' - ' when playing a song)
+        $proc = Get-Process -Name "Spotify" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+        if ($proc -and $proc.MainWindowTitle -and ($proc.MainWindowTitle -notmatch '^Spotify')) {
+          $wshell = New-Object -ComObject WScript.Shell
+          $wshell.SendKeys([char]179)
+        } else {
+          # Also send VK_MEDIA_STOP (0xB2) which stops playback without toggling play
+          Add-Type -TypeDefinition @"
+            using System;
+            using System.Runtime.InteropServices;
+            public class TheaterMediaStop {
+              [DllImport("user32.dll")]
+              public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+              public static void Stop() {
+                keybd_event(0xB2, 0, 0, UIntPtr.Zero);
+                keybd_event(0xB2, 0, 2, UIntPtr.Zero);
+              }
+            }
+"@ -ErrorAction SilentlyContinue
+          [TheaterMediaStop]::Stop()
+        }
+      `;
+      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch (e) {
+      console.warn('Could not pause Spotify on Windows:', e);
+    }
+  }
+}
+
+// Helper to mute or unmute the system microphone (Windows CoreAudio capture endpoints + macOS/Linux fallbacks)
+function setSystemMicrophoneMute(mute: boolean) {
+  if (process.platform === 'win32') {
+    try {
+      const muteVal = mute ? '$true' : '$false';
+      const psScript = `
+        $ErrorActionPreference = 'SilentlyContinue'
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace CinemaAudio {
+  [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IAudioEndpointVolume {
+    int RegisterControlChangeNotify(IntPtr pNotify);
+    int UnregisterControlChangeNotify(IntPtr pNotify);
+    int GetChannelCount(out int pnChannelCount);
+    int SetMasterVolumeLevel(float fLevelDB, Guid pguidEventContext);
+    int SetMasterVolumeLevelScalar(float fLevel, Guid pguidEventContext);
+    int GetMasterVolumeLevel(out float pfLevelDB);
+    int GetMasterVolumeLevelScalar(out float pfLevel);
+    int SetChannelVolumeLevel(uint nChannel, float fLevelDB, Guid pguidEventContext);
+    int SetChannelVolumeLevelScalar(uint nChannel, float fLevel, Guid pguidEventContext);
+    int GetChannelVolumeLevel(uint nChannel, out float pfLevelDB);
+    int GetChannelVolumeLevelScalar(uint nChannel, out float pfLevel);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, Guid pguidEventContext);
+    int GetMute(out bool pbMute);
+  }
+
+  [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IMMDevice {
+    int Activate(ref Guid id, int clsCtx, int activationParams, out IAudioEndpointVolume aev);
+  }
+
+  [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IMMDeviceCollection {
+    int GetCount(out uint pcDevices);
+    int Item(uint nDevice, out IMMDevice ppDevice);
+  }
+
+  [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IMMDeviceEnumerator {
+    int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IMMDeviceCollection ppDevices);
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+  }
+
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  class MMDeviceEnumeratorComObject { }
+
+  public class MicManager {
+    public static void SetMicMute(bool mute) {
+      var enumerator = new MMDeviceEnumeratorComObject() as IMMDeviceEnumerator;
+      if (enumerator == null) return;
+      Guid aevGuid = typeof(IAudioEndpointVolume).GUID;
+
+      // 1 = eCapture (microphones/line-in), 1 = DEVICE_STATE_ACTIVE
+      IMMDeviceCollection collection;
+      if (enumerator.EnumAudioEndpoints(1, 1, out collection) == 0 && collection != null) {
+        uint count = 0;
+        collection.GetCount(out count);
+        for (uint i = 0; i < count; i++) {
+          IMMDevice dev;
+          if (collection.Item(i, out dev) == 0 && dev != null) {
+            IAudioEndpointVolume aev;
+            if (dev.Activate(ref aevGuid, 23, 0, out aev) == 0 && aev != null) {
+              aev.SetMute(mute, Guid.Empty);
+            }
+          }
+        }
+      }
+
+      // Also ensure default capture endpoints (roles 0, 1, 2) are muted/unmuted
+      for (int role = 0; role <= 2; role++) {
+        IMMDevice defaultDev;
+        if (enumerator.GetDefaultAudioEndpoint(1, role, out defaultDev) == 0 && defaultDev != null) {
+          IAudioEndpointVolume defaultAev;
+          if (defaultDev.Activate(ref aevGuid, 23, 0, out defaultAev) == 0 && defaultAev != null) {
+            defaultAev.SetMute(mute, Guid.Empty);
+          }
+        }
+      }
+    }
+  }
+}
+"@ -ErrorAction SilentlyContinue
+        [CinemaAudio.MicManager]::SetMicMute(${muteVal})
+      `;
+      spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-Command', psScript], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch (e) {
+      console.warn('Could not set Windows microphone mute:', e);
+    }
+  } else if (process.platform === 'darwin') {
+    try {
+      const vol = mute ? 0 : 100;
+      spawn('osascript', ['-e', `set volume input volume ${vol}`], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch {}
+  } else {
+    try {
+      const flag = mute ? '1' : '0';
+      spawn('pactl', ['set-source-mute', '@DEFAULT_SOURCE@', flag], {
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+    } catch {}
+  }
+}
+
+// Karaoke Mode Integration (https://k2.lazeria.com/p?code=xxxx & https://k2.lazeria.com/admin)
+app.post('/api/karaoke/action', async (req: Request, res: Response) => {
+  try {
+    const { action, code } = req.body;
+    const db = await getDatabase();
+
+    if (typeof code === 'string') {
+      const cleanCode = code.trim().slice(0, 4);
+      playbackState.karaokeCode = cleanCode;
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('karaoke_code', '${sqlEscape(cleanCode)}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(cleanCode)}'
+      `);
+    }
+
+    if (action === 'set_code') {
+      saveDatabase();
+      broadcast('SETTINGS_UPDATED', { karaoke_code: playbackState.karaokeCode });
+      broadcast('KARAOKE_STATE', {
+        karaokeActive: playbackState.karaokeActive,
+        karaokeCode: playbackState.karaokeCode,
+        micMuted: playbackState.micMuted,
+      });
+      res.json({
+        success: true,
+        playbackState,
+        karaokeUrl: `https://k2.lazeria.com/p?code=${encodeURIComponent(playbackState.karaokeCode)}`,
+      });
+      return;
+    }
+
+    if (action === 'start') {
+      // 1. Stop any active cinema video/playlist playback
+      playbackState.isPlaying = false;
+      playbackState.currentTime = 0;
+      playbackState.lastAction = 'karaoke_start';
+
+      // 2. Stop Spotify and walk-in pre-show audio & slides
+      playbackState.spotifyPlaying = false;
+      pauseSpotifyOnWindows();
+
+      // 3. Activate Karaoke mode and unmute microphone for singing
+      playbackState.karaokeActive = true;
+      playbackState.micMuted = false;
+      setSystemMicrophoneMute(false);
+
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('karaoke_active', 'true')
+        ON CONFLICT(key) DO UPDATE SET value = 'true'
+      `);
+      saveDatabase();
+
+      broadcast('PLAYBACK_STOPPED', playbackState);
+      broadcast('SPOTIFY_STATE', {
+        isPlaying: false,
+        track: playbackState.spotifyTrack,
+        artist: playbackState.spotifyArtist,
+      });
+      broadcast('KARAOKE_STATE', {
+        karaokeActive: true,
+        karaokeCode: playbackState.karaokeCode,
+        micMuted: false,
+      });
+      broadcast('SETTINGS_UPDATED', {
+        karaoke_code: playbackState.karaokeCode,
+        karaoke_active: 'true',
+      });
+
+      res.json({
+        success: true,
+        playbackState,
+        karaokeUrl: `https://k2.lazeria.com/p?code=${encodeURIComponent(playbackState.karaokeCode)}`,
+      });
+      return;
+    }
+
+    if (action === 'cinema') {
+      // 1. Mute the microphone when switching back to Cinema mode
+      playbackState.micMuted = true;
+      setSystemMicrophoneMute(true);
+
+      // 2. Exit Karaoke mode and start Pre-Show Slides (isPlaying = false, karaokeActive = false)
+      playbackState.karaokeActive = false;
+      playbackState.isPlaying = false;
+      playbackState.currentTime = 0;
+      playbackState.lastAction = 'cinema_mode';
+
+      // 3. Start Spotify audio and walk-in pre-show audio
+      playbackState.spotifyPlaying = true;
+      const uriRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_playlist_uri'");
+      const spotifyUri = (uriRes[0]?.values[0]?.[0] || 'spotify:playlist:37i9dQZF1DXdgnBRuh640I') as string;
+      const modeRes = db.exec("SELECT value FROM settings WHERE key = 'preshow_music_mode'");
+      const currentMode = (modeRes[0]?.values[0]?.[0] || 'spotify') as string;
+      if (currentMode === 'spotify') {
+        launchAndPlaySpotifyOnWindows(spotifyUri);
+      }
+
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('karaoke_active', 'false')
+        ON CONFLICT(key) DO UPDATE SET value = 'false'
+      `);
+      saveDatabase();
+
+      broadcast('KARAOKE_STATE', {
+        karaokeActive: false,
+        karaokeCode: playbackState.karaokeCode,
+        micMuted: true,
+      });
+      broadcast('SPOTIFY_STATE', {
+        isPlaying: true,
+        track: playbackState.spotifyTrack,
+        artist: playbackState.spotifyArtist,
+      });
+      broadcast('PLAYBACK_ACTION', {
+        action: 'stop',
+        value: 0,
+        playbackState,
+      });
+      broadcast('SETTINGS_UPDATED', {
+        karaoke_active: 'false',
+      });
+
+      res.json({
+        success: true,
+        playbackState,
+      });
+      return;
+    }
+
+    res.status(400).json({ error: 'Unknown karaoke action' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Sync from projector display
 app.post('/api/playback/sync', (req: Request, res: Response) => {
   const { currentTime, duration, isPlaying } = req.body;
@@ -1843,7 +2141,19 @@ app.post('/api/playback/sync', (req: Request, res: Response) => {
 
 // Mount Vite or serve static production build
 async function startServer() {
-  await getDatabase();
+  const db = await getDatabase();
+  try {
+    const kRes = db.exec("SELECT key, value FROM settings WHERE key IN ('karaoke_code', 'karaoke_active', 'active_slideshow_id')");
+    if (kRes[0]?.values) {
+      kRes[0].values.forEach(([k, v]) => {
+        if (k === 'karaoke_code') playbackState.karaokeCode = String(v || '');
+        if (k === 'karaoke_active') playbackState.karaokeActive = String(v) === 'true';
+        if (k === 'active_slideshow_id' && v) playbackState.activeSlideshowId = String(v);
+      });
+    }
+  } catch (e) {
+    console.warn('Could not load initial karaoke state from SQLite:', e);
+  }
 
   if (process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(process.cwd(), 'dist'))) {
     app.use(express.static(path.resolve(process.cwd(), 'dist')));
@@ -1873,3 +2183,4 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('Fatal server start error:', err);
 });
+

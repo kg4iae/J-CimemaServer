@@ -261,3 +261,16 @@ export async function uploadPreshowAudio(file: File): Promise<{ success: boolean
   });
   return res.json();
 }
+
+export async function controlKaraoke(
+  action: 'start' | 'cinema' | 'set_code',
+  code?: string
+): Promise<{ success: boolean; playbackState: PlaybackState; karaokeUrl?: string }> {
+  const res = await fetch(`${API_BASE}/karaoke/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, code }),
+  });
+  return res.json();
+}
+

@@ -14,6 +14,7 @@ import {
   Presentation,
   Palette,
   Sparkles,
+  Mic,
 } from 'lucide-react';
 import ProjectorScreen from './components/ProjectorScreen';
 import LiveDeckTab from './components/LiveDeckTab';
@@ -22,6 +23,7 @@ import MediaIngestTab from './components/MediaIngestTab';
 import SlideshowTab from './components/SlideshowTab';
 import AutomationTab from './components/AutomationTab';
 import SpotifyTab from './components/SpotifyTab';
+import KaraokeTab from './components/KaraokeTab';
 import SettingsTab from './components/SettingsTab';
 import QrCodeModal from './components/QrCodeModal';
 
@@ -58,7 +60,7 @@ export default function App() {
     return params.get('mode') === 'screen' || window.location.pathname === '/screen';
   });
 
-  const [activeTab, setActiveTab] = useState<'deck' | 'playlists' | 'media' | 'slideshows' | 'cues' | 'spotify' | 'settings'>('deck');
+  const [activeTab, setActiveTab] = useState<'deck' | 'playlists' | 'media' | 'slideshows' | 'cues' | 'spotify' | 'karaoke' | 'settings'>('deck');
   const [showQrModal, setShowQrModal] = useState(false);
 
   // Bright, interesting pattern options: projector, blueprint, waves, geometric
@@ -167,6 +169,14 @@ export default function App() {
             ...prev,
             spotifyPlaying: payload.data.isPlaying,
             spotifyTrack: payload.data.track || prev.spotifyTrack,
+          }));
+        } else if (payload.type === 'KARAOKE_STATE') {
+          setPlayback((prev) => ({
+            ...prev,
+            karaokeActive: payload.data.karaokeActive,
+            karaokeCode: payload.data.karaokeCode ?? prev.karaokeCode,
+            micMuted: payload.data.micMuted ?? prev.micMuted,
+            isPlaying: payload.data.karaokeActive ? false : prev.isPlaying,
           }));
         } else if (payload.type === 'AUTOMATION_CUE_FIRED') {
           setPlayback((prev) => ({
@@ -371,6 +381,22 @@ export default function App() {
             <span>Spotify Audio</span>
           </button>
           <button
+            onClick={() => setActiveTab('karaoke')}
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'karaoke'
+                ? 'bg-fuchsia-600 text-white shadow-sm shadow-fuchsia-500/25'
+                : playback.karaokeActive
+                ? 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200 hover:bg-fuchsia-100'
+                : 'text-slate-600 hover:text-fuchsia-700 hover:bg-fuchsia-50/70'
+            }`}
+          >
+            <Mic className="w-3.5 h-3.5" />
+            <span>Karaoke</span>
+            {playback.karaokeActive && (
+              <span className="w-2 h-2 rounded-full bg-fuchsia-400 animate-ping" />
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('settings')}
             className={`min-h-[38px] px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'settings'
@@ -472,6 +498,15 @@ export default function App() {
           <span>Audio</span>
         </button>
         <button
+          onClick={() => setActiveTab('karaoke')}
+          className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'karaoke' ? 'bg-fuchsia-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Mic className="w-3.5 h-3.5" />
+          <span>Karaoke</span>
+        </button>
+        <button
           onClick={() => setActiveTab('settings')}
           className={`min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 ${
             activeTab === 'settings' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
@@ -546,6 +581,15 @@ export default function App() {
             spotifyPlaying={playback.spotifyPlaying}
             spotifyTrack={playback.spotifyTrack}
             spotifyArtist={playback.spotifyArtist}
+            onRefreshSettings={loadAllData}
+          />
+        )}
+
+        {activeTab === 'karaoke' && (
+          <KaraokeTab
+            playback={playback}
+            settings={settings}
+            onPlaybackUpdated={(updated) => setPlayback(updated)}
             onRefreshSettings={loadAllData}
           />
         )}

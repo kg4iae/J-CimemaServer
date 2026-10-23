@@ -101,6 +101,9 @@ export interface PlaybackState {
   spotifyArtist: string;
   activeCue: string | null;
   activeSlideshowId?: string;
+  karaokeActive?: boolean;
+  karaokeCode?: string;
+  micMuted?: boolean;
   lastAction?: string;
 }
 
@@ -115,7 +118,12 @@ export interface TheaterSettings {
   spotify_auto_pause?: string;
   spotify_auto_resume?: string;
   preshow_music_mode?: string;
+  preshow_audio_url?: string;
+  preshow_audio_name?: string;
   active_slideshow_id?: string;
   preshow_display_mode?: 'slideshow' | 'logo';
+  karaoke_code?: string;
+  karaoke_active?: string;
   [key: string]: string | undefined;
 }
+
