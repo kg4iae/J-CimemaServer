@@ -213,6 +213,34 @@ exec cage -s -- chromium \\
   "$TARGET_URL"
 `;
 
+  const installLibrespotScript = `#!/bin/bash
+# Automatically downloads and extracts the precompiled x86_64/amd64 librespot binary
+# from dtcooper/raspotify GitHub releases without requiring an external apt repo or dpkg lock.
+set -e
+
+if command -v librespot >/dev/null 2>&1 || [ -x /usr/local/bin/librespot ]; then
+  exit 0
+fi
+
+echo "Downloading precompiled librespot (amd64) for Debian 12..."
+TMP_DIR="\$(mktemp -d)"
+trap 'rm -rf "\$TMP_DIR"' EXIT
+
+DEB_URL=\$(curl -fsSL https://api.github.com/repos/dtcooper/raspotify/releases/latest \\
+  | grep -oE 'https://[^"]+raspotify_[^"]+_amd64\\.deb' \\
+  | head -n 1)
+
+if [ -n "\$DEB_URL" ]; then
+  curl -fsSL "\$DEB_URL" -o "\$TMP_DIR/raspotify.deb"
+  dpkg-deb -x "\$TMP_DIR/raspotify.deb" "\$TMP_DIR/extract"
+  if [ -f "\$TMP_DIR/extract/usr/bin/librespot" ]; then
+    install -m 0755 "\$TMP_DIR/extract/usr/bin/librespot" /usr/local/bin/librespot
+    ln -sf /usr/local/bin/librespot /usr/bin/librespot || true
+    echo "librespot installed successfully to /usr/local/bin/librespot"
+  fi
+fi
+`;
+
   const spotifyScript = `#!/bin/bash
 # CinemaBooth Native Librespot Spotify Connect Daemon
 set -e
@@ -223,7 +251,13 @@ fi
 
 SPOTIFY_DEVICE_NAME="\${SPOTIFY_DEVICE_NAME:-CinemaBooth Projector}"
 
-exec librespot \\
+if ! command -v librespot >/dev/null 2>&1 && [ ! -x /usr/local/bin/librespot ]; then
+  /usr/bin/cinemabooth-install-librespot || true
+fi
+
+LIBRESPOT_BIN="\$(command -v librespot || echo /usr/local/bin/librespot)"
+
+exec "\$LIBRESPOT_BIN" \\
   --name "$SPOTIFY_DEVICE_NAME" \\
   --device-type avr \\
   --backend alsa \\
@@ -466,11 +500,11 @@ WantedBy=multi-user.target
 `;
 
   const controlFile = `Package: cinemabooth-projector
-Version: 1.0.0
+Version: 1.0.1
 Section: video
 Priority: optional
 Architecture: amd64
-Depends: cage, chromium | chromium-browser, librespot, alsa-utils, libasound2-plugins, mesa-va-drivers, wlr-randr, nodejs, avahi-daemon
+Depends: cage, chromium | chromium-browser, alsa-utils, libasound2-plugins, mesa-va-drivers, wlr-randr, nodejs, avahi-daemon, curl, ca-certificates
 Maintainer: CinemaBooth Theater Systems <support@cinemabooth.local>
 Description: CinemaBooth Native Linux Projector Appliance (Wayland Cage + Librespot + True 5.1 Surround)
  Turns a minimal Debian/Ubuntu x86_64 Mini PC into a dedicated theater projector
@@ -486,6 +520,9 @@ if ! id -u projector >/dev/null 2>&1; then
 else
   usermod -a -G video,render,audio,input,tty,plugdev projector || true
 fi
+
+# Download and extract precompiled librespot binary for Debian 12 amd64
+/usr/bin/cinemabooth-install-librespot || true
 
 # Unmute S/PDIF IEC958 optical output if present
 amixer set 'IEC958' unmute >/dev/null 2>&1 || true
@@ -527,6 +564,7 @@ exit 0
     { name: './etc/asound.conf', mode: 0o644, type: 'file', content: Buffer.from(asoundConf, 'utf8') },
     { name: './usr/', mode: 0o755, type: 'dir' },
     { name: './usr/bin/', mode: 0o755, type: 'dir' },
+    { name: './usr/bin/cinemabooth-install-librespot', mode: 0o755, type: 'file', content: Buffer.from(installLibrespotScript, 'utf8') },
     { name: './usr/bin/cinemabooth-kiosk', mode: 0o755, type: 'file', content: Buffer.from(kioskScript, 'utf8') },
     { name: './usr/bin/cinemabooth-spotify', mode: 0o755, type: 'file', content: Buffer.from(spotifyScript, 'utf8') },
     { name: './usr/bin/cinemabooth-agent', mode: 0o755, type: 'file', content: Buffer.from(agentScript, 'utf8') },

@@ -101,8 +101,7 @@ export default function SettingsTab({
 }: SettingsTabProps) {
   const defaultServerUrl =
     settings.appliance_server_url ||
-    status?.remoteUrl ||
-    (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+    'http://192.168.1.130:31047';
 
   const [theaterName, setTheaterName] = useState(settings.theater_name || 'Grand Majestic Cinema');
   const [serverUrl, setServerUrl] = useState(defaultServerUrl);

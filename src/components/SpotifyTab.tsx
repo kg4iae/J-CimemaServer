@@ -15,6 +15,7 @@ import {
   Tv,
   KeyRound,
   RefreshCw,
+  Copy,
 } from 'lucide-react';
 import { TheaterSettings } from '../types/theater';
 import {
@@ -483,7 +484,7 @@ export default function SpotifyTab({
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              Spotify Developer Client ID (For Auto-Refreshing OAuth)
+              Spotify Developer Client ID (Optional for Native Linux Appliance)
             </label>
             <div className="flex gap-2">
               <input
@@ -504,6 +505,31 @@ export default function SpotifyTab({
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Exact Redirect URI Helper Box for Spotify Developer Dashboard */}
+        <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5 min-w-0">
+            <div className="text-[11px] font-bold text-slate-700">
+              Spotify Developer Redirect URI (Paste this exact URL in your Spotify App settings):
+            </div>
+            <code className="block text-xs font-mono font-bold text-emerald-700 truncate">
+              {typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : 'http://127.0.0.1:3000/'}
+            </code>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const uri = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : 'http://127.0.0.1:3000/';
+              navigator.clipboard.writeText(uri);
+              setSavedMessage(`Copied Redirect URI: ${uri}`);
+              setTimeout(() => setSavedMessage(null), 3000);
+            }}
+            className="min-h-[36px] px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+          >
+            <Copy className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Copy Redirect URI</span>
+          </button>
         </div>
 
         {/* Optional Direct Token Paste (if not using OAuth redirect) */}

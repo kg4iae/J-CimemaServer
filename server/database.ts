@@ -176,7 +176,7 @@ function initSchema(db: SqlJsDatabase) {
       ('preshow_display_mode', 'slideshow'),
       ('karaoke_code', ''),
       ('karaoke_active', 'false'),
-      ('appliance_server_url', ''),
+      ('appliance_server_url', 'http://192.168.1.130:31047'),
       ('appliance_audio_output', 'optical-51-ac3'),
       ('appliance_spdif_card', '0'),
       ('appliance_resolution', 'auto')
@@ -191,10 +191,14 @@ function initSchema(db: SqlJsDatabase) {
       ('spotify_volume', '0.80'),
       ('karaoke_code', ''),
       ('karaoke_active', 'false'),
-      ('appliance_server_url', ''),
+      ('appliance_server_url', 'http://192.168.1.130:31047'),
       ('appliance_audio_output', 'optical-51-ac3'),
       ('appliance_spdif_card', '0'),
       ('appliance_resolution', 'auto')
+    `);
+    db.run(`
+      UPDATE settings SET value = 'http://192.168.1.130:31047'
+      WHERE key = 'appliance_server_url' AND (value = '' OR value IS NULL)
     `);
   }
 
