@@ -171,13 +171,13 @@ function initSchema(db: SqlJsDatabase) {
       ('spotify_playlist_uri', 'spotify:playlist:37i9dQZF1DXdgnBRuh640I'),
       ('spotify_auto_pause', 'true'),
       ('spotify_auto_resume', 'true'),
-      ('preshow_music_mode', 'spotify'),
+      ('preshow_music_mode', 'retro'),
       ('active_slideshow_id', 'ss_general_preshow'),
       ('preshow_display_mode', 'slideshow'),
       ('karaoke_code', ''),
       ('karaoke_active', 'false'),
       ('appliance_server_url', 'http://192.168.1.130:31047'),
-      ('appliance_audio_output', 'optical-51-ac3'),
+      ('appliance_audio_output', 'stereo-20'),
       ('appliance_spdif_card', '0'),
       ('appliance_resolution', 'auto')
     `);
@@ -189,10 +189,11 @@ function initSchema(db: SqlJsDatabase) {
       ('spotify_token_expires_at', '0'),
       ('spotify_device_name', 'CinemaBooth Projector'),
       ('spotify_volume', '0.80'),
+      ('preshow_music_mode', 'retro'),
       ('karaoke_code', ''),
       ('karaoke_active', 'false'),
       ('appliance_server_url', 'http://192.168.1.130:31047'),
-      ('appliance_audio_output', 'optical-51-ac3'),
+      ('appliance_audio_output', 'stereo-20'),
       ('appliance_spdif_card', '0'),
       ('appliance_resolution', 'auto')
     `);
@@ -200,6 +201,15 @@ function initSchema(db: SqlJsDatabase) {
       UPDATE settings SET value = 'http://192.168.1.130:31047'
       WHERE key = 'appliance_server_url' AND (value = '' OR value IS NULL)
     `);
+    // If preshow_music_mode was left on 'spotify' without a Spotify OAuth token, switch to 'retro' so Walk-In music plays out of the box
+    const tokCheck = db.exec("SELECT value FROM settings WHERE key = 'spotify_access_token'");
+    const hasSpotifyTok = Boolean((tokCheck[0]?.values[0]?.[0] as string || '').trim());
+    if (!hasSpotifyTok) {
+      db.run(`
+        UPDATE settings SET value = 'retro'
+        WHERE key = 'preshow_music_mode' AND value = 'spotify'
+      `);
+    }
   }
 
   // Seed default slideshows if empty
@@ -242,19 +252,15 @@ function initSchema(db: SqlJsDatabase) {
     `);
   }
 
-  // Seed default media library if empty
-  const checkMedia = db.exec("SELECT COUNT(*) as count FROM media_items");
-  const mediaCount = checkMedia[0]?.values[0]?.[0] as number || 0;
-  if (mediaCount === 0) {
-    db.run(`
-      INSERT INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, audio_channels, audio_layout, is_compatible, conversion_status, conversion_progress, created_at) VALUES
-      ('media_countdown_bumper', 'Classic Cinema Countdown Bumper', 'countdown_bumper.mp4', 'countdown_bumper.mp4', '/media/countdown_bumper.mp4', 15480000, 15.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
-      ('media_vintage_policy', 'Theater Courtesy & Silence Phones Trailer', 'theater_policy.mp4', 'theater_policy.mp4', '/media/theater_policy.mp4', 28400000, 32.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now')),
-      ('media_trailer_nature', 'Feature Trailer: Celestial Horizons 4K', 'celestial_trailer.mp4', 'celestial_trailer.mp4', '/media/celestial_trailer.mp4', 85000000, 110.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
-      ('media_main_feature', 'Main Presentation: The Grand Voyage', 'main_feature.mp4', 'main_feature.mp4', '/media/main_feature.mp4', 420000000, 360.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
-      ('media_outro_credits', 'Theater Farewell & Next Week Preview', 'outro_preview.mp4', 'outro_preview.mp4', '/media/outro_preview.mp4', 42000000, 45.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now'))
-    `);
-  }
+  // Seed default media library if empty (or restore seed media items if pruned)
+  db.run(`
+    INSERT OR IGNORE INTO media_items (id, title, filename, original_name, file_path, file_size, duration, resolution, format, audio_channels, audio_layout, is_compatible, conversion_status, conversion_progress, created_at) VALUES
+    ('media_countdown_bumper', 'Classic Cinema Countdown Bumper', 'countdown_bumper.mp4', 'countdown_bumper.mp4', '/media/countdown_bumper.mp4', 15480000, 15.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+    ('media_vintage_policy', 'Theater Courtesy & Silence Phones Trailer', 'theater_policy.mp4', 'theater_policy.mp4', '/media/theater_policy.mp4', 28400000, 32.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now')),
+    ('media_trailer_nature', 'Feature Trailer: Celestial Horizons 4K', 'celestial_trailer.mp4', 'celestial_trailer.mp4', '/media/celestial_trailer.mp4', 85000000, 110.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+    ('media_main_feature', 'Main Presentation: The Grand Voyage', 'main_feature.mp4', 'main_feature.mp4', '/media/main_feature.mp4', 420000000, 360.0, '3840x2160', 'mp4', 6, '5.1 Surround', 1, 'ready', 100, datetime('now')),
+    ('media_outro_credits', 'Theater Farewell & Next Week Preview', 'outro_preview.mp4', 'outro_preview.mp4', '/media/outro_preview.mp4', 42000000, 45.0, '1920x1080', 'mp4', 2, '2.0 Stereo', 1, 'ready', 100, datetime('now'))
+  `);
 
   // Seed default playlists if empty
   const checkPlaylists = db.exec("SELECT COUNT(*) as count FROM playlists");
@@ -267,10 +273,14 @@ function initSchema(db: SqlJsDatabase) {
       ('pl_matinee', 'Family Weekend Matinee', 'Short preview reels followed by animated feature presentation.', '${now}', '${now}'),
       ('pl_shorts_showcase', 'Independent Shorts Showcase', 'Curated selection of short films with subtle interval lighting.', '${now}', '${now}')
     `);
+  }
 
-    // Add items for Friday Gala
+  // Ensure default playlists have their media items if they were previously pruned to 0 media items
+  const checkFnMedia = db.exec("SELECT COUNT(*) FROM playlist_items WHERE playlist_id = 'pl_feature_night' AND item_type = 'media'");
+  const fnMediaCount = (checkFnMedia[0]?.values[0]?.[0] as number) || 0;
+  if (fnMediaCount === 0) {
     db.run(`
-      INSERT INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing) VALUES
+      INSERT OR IGNORE INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing) VALUES
       ('pli_1', 'pl_feature_night', 1, 'cue', 'Cue: Preshow Lights Dim to 30%', NULL, 'cue_dim_preshow', 0, 'before'),
       ('pli_2', 'pl_feature_night', 2, 'media', 'Cinema Countdown Bumper', 'media_countdown_bumper', NULL, 15.0, 'before'),
       ('pli_3', 'pl_feature_night', 3, 'cue', 'Cue: Curtains Open Proscenium', NULL, 'cue_curtains_open', 0, 'before'),
@@ -282,10 +292,13 @@ function initSchema(db: SqlJsDatabase) {
       ('pli_9', 'pl_feature_night', 9, 'media', 'Theater Farewell & Next Week Preview', 'media_outro_credits', NULL, 45.0, 'before'),
       ('pli_10', 'pl_feature_night', 10, 'cue', 'Cue: Exit Lights Full 100%', NULL, 'cue_house_exit', 0, 'after')
     `);
+  }
 
-    // Add items for Matinee
+  const checkMatMedia = db.exec("SELECT COUNT(*) FROM playlist_items WHERE playlist_id = 'pl_matinee' AND item_type = 'media'");
+  const matMediaCount = (checkMatMedia[0]?.values[0]?.[0] as number) || 0;
+  if (matMediaCount === 0) {
     db.run(`
-      INSERT INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing) VALUES
+      INSERT OR IGNORE INTO playlist_items (id, playlist_id, sort_order, item_type, title, media_id, cue_id, duration, cue_timing) VALUES
       ('pli_m1', 'pl_matinee', 1, 'cue', 'Cue: Preshow Lights Dim to 30%', NULL, 'cue_dim_preshow', 0, 'before'),
       ('pli_m2', 'pl_matinee', 2, 'media', 'Cinema Countdown Bumper', 'media_countdown_bumper', NULL, 15.0, 'before'),
       ('pli_m3', 'pl_matinee', 3, 'cue', 'Cue: Feature Start - Auditorium Blackout', NULL, 'cue_blackout', 0, 'before'),

@@ -9,10 +9,10 @@ dist
 npm-debug.log*
 data/*.db
 data/*.db-journal
-media/*.mp4
 media/*.mkv
 media/*.mov
 media/*.avi
 media/*.webm
 media/*.mpg
 media/*.mpeg
+

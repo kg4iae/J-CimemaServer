@@ -204,8 +204,9 @@ app.post('/api/preshow/audio/upload', upload.single('audio'), async (req: Reques
   }
 });
 
-// Serve assets folder
+// Serve assets folder (checks public/assets first, then dist/assets fallback for Docker bind mounts)
 app.use('/assets', express.static(path.resolve(process.cwd(), 'public/assets')));
+app.use('/assets', express.static(path.resolve(process.cwd(), 'dist/assets')));
 
 // In-memory runtime state synced with SQLite
 interface ApplianceRuntimeStatus {
@@ -470,12 +471,54 @@ async function executeCue(cueId: string): Promise<{ success: boolean; message: s
   }
 }
 
+// Helper: Starting at playbackState.currentItemIndex, execute any 'cue' items and advance until a 'media' item is reached
+async function advancePastCues(): Promise<boolean> {
+  const db = await getDatabase();
+  const playlistItemsRes = db.exec(`
+    SELECT * FROM playlist_items 
+    WHERE playlist_id = '${sqlEscape(playbackState.currentPlaylistId)}'
+    ORDER BY sort_order ASC
+  `);
+
+  if (!playlistItemsRes[0] || !playlistItemsRes[0].values.length) {
+    return false;
+  }
+
+  const items = playlistItemsRes[0].values;
+  const cols = playlistItemsRes[0].columns;
+  const itemTypeIdx = cols.indexOf('item_type');
+  const cueIdIdx = cols.indexOf('cue_id');
+  const durIdx = cols.indexOf('duration');
+
+  let idx = Math.max(0, Math.min(playbackState.currentItemIndex, items.length - 1));
+  while (idx < items.length) {
+    const itemType = items[idx][itemTypeIdx];
+    const cueId = items[idx][cueIdIdx] as string;
+    if (itemType === 'cue') {
+      if (cueId) {
+        await executeCue(cueId);
+      }
+      idx++;
+    } else {
+      // Found a 'media' item!
+      playbackState.currentItemIndex = idx;
+      const itemDur = Number(items[idx][durIdx]) || 15.0;
+      if (itemDur > 0) {
+        playbackState.duration = itemDur;
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Next item runner
 async function handleNextItem() {
   const db = await getDatabase();
   const playlistItemsRes = db.exec(`
     SELECT * FROM playlist_items 
-    WHERE playlist_id = '${playbackState.currentPlaylistId}'
+    WHERE playlist_id = '${sqlEscape(playbackState.currentPlaylistId)}'
     ORDER BY sort_order ASC
   `);
 
@@ -492,24 +535,11 @@ async function handleNextItem() {
   if (nextIdx < items.length) {
     playbackState.currentItemIndex = nextIdx;
     playbackState.currentTime = 0;
-    
-    // Check if next item is a cue
-    const cols = playlistItemsRes[0].columns;
-    const itemTypeIdx = cols.indexOf('item_type');
-    const cueIdIdx = cols.indexOf('cue_id');
-    const itemType = items[nextIdx][itemTypeIdx];
-    const cueId = items[nextIdx][cueIdIdx] as string;
 
-    if (itemType === 'cue' && cueId) {
-      await executeCue(cueId);
-      // If it's a cue item, advance immediately to the next one
-      if (nextIdx + 1 < items.length) {
-        playbackState.currentItemIndex = nextIdx + 1;
-      } else {
-        // End of playlist
-        handlePlaylistEnd();
-        return;
-      }
+    const foundMedia = await advancePastCues();
+    if (!foundMedia) {
+      await handlePlaylistEnd();
+      return;
     }
 
     broadcast('ITEM_CHANGED', playbackState);
@@ -929,13 +959,21 @@ app.get('/api/media', async (req: Request, res: Response) => {
     const validMedia: typeof media = [];
     let hasPruned = false;
 
+    const SEED_MEDIA_IDS = new Set([
+      'media_countdown_bumper',
+      'media_vintage_policy',
+      'media_trailer_nature',
+      'media_main_feature',
+      'media_outro_credits',
+    ]);
+
     for (const item of media) {
       const cleanName = path.basename(item.filename || '');
       const filePath = path.join(MEDIA_DIR, cleanName);
-      if (fs.existsSync(filePath)) {
+      if (fs.existsSync(filePath) || SEED_MEDIA_IDS.has(String(item.id))) {
         validMedia.push(item);
       } else {
-        // Physical file does not exist on disk! Prune it from database
+        // Physical file does not exist on disk! Prune user-deleted file from database
         db.run(`DELETE FROM media_items WHERE id = '${sqlEscape(item.id)}'`);
         db.run(`DELETE FROM playlist_items WHERE media_id = '${sqlEscape(item.id)}'`);
         hasPruned = true;
@@ -2144,8 +2182,13 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
 
   switch (action) {
     case 'play': {
+      playbackState.karaokeActive = false;
       playbackState.isPlaying = true;
       playbackState.lastAction = 'play';
+
+      // Execute any leading automation cues (e.g., item 0 'Cue: Preshow Lights Dim to 30%')
+      // and advance currentItemIndex to the first playable 'media' item!
+      await advancePastCues();
 
       // Auto pause Spotify on Projector Screen when movie event begins!
       const autoPauseRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_auto_pause'");
@@ -2162,6 +2205,7 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
           artist: playbackState.spotifyArtist,
         });
       }
+      broadcast('ITEM_CHANGED', playbackState);
       break;
     }
     case 'pause': {
@@ -2172,9 +2216,10 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
     case 'stop': {
       playbackState.isPlaying = false;
       playbackState.currentTime = 0;
+      playbackState.currentItemIndex = 0;
       playbackState.lastAction = 'stop';
 
-      // Auto resume Spotify on Projector Screen when stopped
+      // Auto resume Spotify / Walk-In audio on Projector Screen when stopped
       const autoResumeRes = db.exec("SELECT value FROM settings WHERE key = 'spotify_auto_resume'");
       const autoResume = autoResumeRes[0]?.values[0]?.[0] !== 'false';
       if (autoResume) {
@@ -2220,6 +2265,8 @@ app.post('/api/playback/action', async (req: Request, res: Response): Promise<vo
       if (typeof itemIndex === 'number') {
         playbackState.currentItemIndex = itemIndex;
         playbackState.currentTime = 0;
+        await advancePastCues();
+        broadcast('ITEM_CHANGED', playbackState);
       }
       break;
     }

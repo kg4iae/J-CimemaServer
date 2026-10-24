@@ -29,7 +29,7 @@ export default function ProjectorScreen() {
     logo_url: '/assets/theater_logo.svg',
     active_slideshow_id: 'ss_general_preshow',
     preshow_display_mode: 'slideshow',
-    preshow_music_mode: 'spotify',
+    preshow_music_mode: 'retro',
   });
 
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -185,6 +185,7 @@ export default function ProjectorScreen() {
     preshowAudio.syncState({
       isPlaylistPlaying: playback.isPlaying || Boolean(playback.karaokeActive),
       spotifyPlaying: playback.spotifyPlaying && !playback.karaokeActive,
+      spotifyConnected: false, // Ensure built-in walk-in audio plays if preshow_music_mode was left on 'spotify' without active Spotify track
       volume: effectiveSpotifyVol,
       isMuted: playback.isMuted,
       preshowMusicMode: settings.preshow_music_mode,
@@ -215,13 +216,22 @@ export default function ProjectorScreen() {
     refreshAll();
   }, []);
 
-  // Determine current item from currentPlaylistId and currentItemIndex
+  // Determine current item from currentPlaylistId and currentItemIndex (automatically skipping past 'cue' items)
   useEffect(() => {
-    const activePl = playlists.find((p) => p.id === playback.currentPlaylistId);
+    const activePl = playlists.find((p) => p.id === playback.currentPlaylistId) || playlists[0];
     if (activePl && activePl.items && activePl.items.length > 0) {
-      const idx = Math.min(playback.currentItemIndex, activePl.items.length - 1);
-      const it = activePl.items[idx];
+      let idx = Math.max(0, Math.min(playback.currentItemIndex, activePl.items.length - 1));
+      let it = activePl.items[idx];
+      while (it && it.item_type === 'cue' && idx + 1 < activePl.items.length) {
+        idx++;
+        it = activePl.items[idx];
+      }
+      if (it && it.item_type === 'cue') {
+        const firstMedia = activePl.items.find((m) => m.item_type === 'media');
+        if (firstMedia) it = firstMedia;
+      }
       setCurrentItem(it);
+      setUseProceduralCanvas(false);
     }
   }, [playlists, playback.currentPlaylistId, playback.currentItemIndex]);
 
@@ -252,11 +262,13 @@ export default function ProjectorScreen() {
           const { action, value, playbackState } = payload.data;
           setPlayback(playbackState);
 
+          if (action === 'play') {
+            setUseProceduralCanvas(false);
+          }
+
           if (videoRef.current) {
             if (action === 'play') {
-              videoRef.current.play().catch(() => {
-                setUseProceduralCanvas(true);
-              });
+              videoRef.current.play().catch(console.warn);
             } else if (action === 'pause') {
               videoRef.current.pause();
             } else if (action === 'stop') {
@@ -284,18 +296,6 @@ export default function ProjectorScreen() {
           }
           if (!payload.data.karaokeActive) {
             setCurrentSlideIndex(0);
-            // Release/mute any active microphone capture streams on the Projector PC
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-              navigator.mediaDevices
-                .getUserMedia({ audio: true })
-                .then((stream) => {
-                  stream.getAudioTracks().forEach((t) => {
-                    t.enabled = false;
-                    t.stop();
-                  });
-                })
-                .catch(() => {});
-            }
           }
         } else if (payload.type === 'ITEM_CHANGED') {
           setPlayback(payload.data);
@@ -350,13 +350,159 @@ export default function ProjectorScreen() {
     };
   }, []);
 
-  // Sync video audio properties
+  const isKaraokeMode = Boolean(playback.karaokeActive);
+  const activeKaraokeCode = (playback.karaokeCode || settings.karaoke_code || '').trim();
+  const karaokePresentationUrl = `https://k2.lazeria.com/p?code=${encodeURIComponent(activeKaraokeCode)}`;
+
+  // Transition from Walk-In Slideshow to Cinema Presentation whenever playback.isPlaying is true
+  const isVideoItem = !isKaraokeMode && Boolean(playback.isPlaying);
+  const shouldUseCanvasFallback = isVideoItem && (useProceduralCanvas || !currentItem?.file_path || currentItem?.item_type === 'cue');
+
+  // Ensure <video> plays with proper volume & unmuted audio as soon as it mounts or item changes
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.volume = playback.volume;
-      videoRef.current.muted = playback.isMuted;
+    if (isVideoItem && !shouldUseCanvasFallback && videoRef.current) {
+      videoRef.current.volume = typeof playback.volume === 'number' ? playback.volume : 1.0;
+      videoRef.current.muted = Boolean(playback.isMuted);
+      videoRef.current.play().catch(console.warn);
     }
-  }, [playback.volume, playback.isMuted]);
+  }, [isVideoItem, shouldUseCanvasFallback, currentItem?.file_path, playback.volume, playback.isMuted]);
+
+  // Procedural Cinema Presentation Reel + Web Audio Soundtrack Fallback (when .mp4 file is missing on disk)
+  useEffect(() => {
+    if (!shouldUseCanvasFallback) return;
+
+    const totalDur = Number(currentItem?.duration) || Number(playback.duration) || 15;
+    const startTs = performance.now() - (Number(playback.currentTime) || 0) * 1000;
+    const titleText = currentItem?.title || 'Main Feature Presentation';
+    const theaterTitle = settings.theater_name || 'Grand Majestic Cinema';
+
+    // Start Web Audio API Cinema Fanfare / Feature Chord Pad so audio is always audible
+    let audioCtx: AudioContext | null = null;
+    let masterGain: GainNode | null = null;
+    const oscs: OscillatorNode[] = [];
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      masterGain = audioCtx.createGain();
+      const effVol = playback.isMuted ? 0.0001 : Math.max(0.05, (playback.volume ?? 1.0) * 0.18);
+      masterGain.gain.setValueAtTime(effVol, audioCtx.currentTime);
+      masterGain.connect(audioCtx.destination);
+
+      // Warm cinema chord (C major 9th orchestral pad)
+      [130.81, 196.0, 261.63, 329.63, 392.0].forEach((freq, i) => {
+        if (!audioCtx || !masterGain) return;
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = i % 2 === 0 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.18 / (i + 1), audioCtx.currentTime);
+        osc.connect(g);
+        g.connect(masterGain);
+        osc.start();
+        oscs.push(osc);
+      });
+    } catch {}
+
+    let lastSyncSec = -1;
+    let ended = false;
+
+    const renderLoop = (now: number) => {
+      const elapsedSec = Math.max(0, (now - startTs) / 1000);
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const w = canvas.width;
+          const h = canvas.height;
+
+          // Deep cinema background
+          const grad = ctx.createRadialGradient(w / 2, h / 2, 80, w / 2, h / 2, w * 0.7);
+          grad.addColorStop(0, '#141b2d');
+          grad.addColorStop(1, '#04060a');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, w, h);
+
+          // SMPTE radar sweep & countdown ring
+          const cx = w / 2;
+          const cy = h / 2 - 40;
+          const radius = 170;
+
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          const angle = (elapsedSec % 1) * Math.PI * 2 - Math.PI / 2;
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, -Math.PI / 2, angle);
+          ctx.stroke();
+
+          // Countdown / Feature badge
+          const remaining = Math.max(1, Math.ceil(totalDur - elapsedSec));
+          ctx.fillStyle = '#f8fafc';
+          ctx.font = 'bold 110px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(remaining), cx, cy);
+
+          // Theater & Item Title
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 24px sans-serif';
+          ctx.fillText(theaterTitle.toUpperCase(), cx, cy + 240);
+
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 44px sans-serif';
+          ctx.fillText(titleText, cx, cy + 295);
+
+          // Progress bar at bottom
+          const pct = Math.min(1, elapsedSec / totalDur);
+          ctx.fillStyle = 'rgba(255,255,255,0.12)';
+          ctx.fillRect(240, h - 90, w - 480, 10);
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(240, h - 90, (w - 480) * pct, 10);
+        }
+      }
+
+      if (Math.floor(elapsedSec * 2) !== lastSyncSec) {
+        lastSyncSec = Math.floor(elapsedSec * 2);
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'SYNC_TIME',
+              data: { currentTime: elapsedSec, duration: totalDur },
+            })
+          );
+        }
+        syncPlaybackProgress(elapsedSec, totalDur, true);
+      }
+
+      if (elapsedSec >= totalDur && !ended) {
+        ended = true;
+        handleVideoEnded();
+        return;
+      }
+
+      animFrameRef.current = requestAnimationFrame(renderLoop);
+    };
+
+    animFrameRef.current = requestAnimationFrame(renderLoop);
+
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      oscs.forEach((o) => {
+        try { o.stop(); } catch {}
+      });
+      if (audioCtx) {
+        audioCtx.close().catch(() => {});
+      }
+    };
+  }, [shouldUseCanvasFallback, currentItem?.id, currentItem?.title, currentItem?.duration, playback.isMuted, playback.volume]);
 
   // Video time update handler
   const handleTimeUpdate = () => {
@@ -413,11 +559,6 @@ export default function ProjectorScreen() {
     }
   };
 
-  const isKaraokeMode = Boolean(playback.karaokeActive);
-  const activeKaraokeCode = (playback.karaokeCode || settings.karaoke_code || '').trim();
-  const karaokePresentationUrl = `https://k2.lazeria.com/p?code=${encodeURIComponent(activeKaraokeCode)}`;
-
-  const isVideoItem = !isKaraokeMode && currentItem?.item_type === 'media' && playback.isPlaying;
   const logoSource = settings.logo_url || '/assets/theater_logo.svg';
   const currentSlide = slides[currentSlideIndex % Math.max(1, slides.length)];
 
@@ -530,7 +671,7 @@ export default function ProjectorScreen() {
       )}
 
       {/* 2. FULLSCREEN SEAMLESS VIDEO (Clean, ZERO on-screen controls) */}
-      {isVideoItem && !useProceduralCanvas && (
+      {isVideoItem && !shouldUseCanvasFallback && (
         <video
           ref={videoRef}
           src={currentItem?.file_path || ''}
@@ -544,7 +685,7 @@ export default function ProjectorScreen() {
       )}
 
       {/* 3. PROCEDURAL CINEMATIC REEL CANVAS (Fallback for simulation & test clips) */}
-      {isVideoItem && useProceduralCanvas && (
+      {shouldUseCanvasFallback && (
         <canvas
           ref={canvasRef}
           width={1920}

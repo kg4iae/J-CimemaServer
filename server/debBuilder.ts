@@ -140,10 +140,24 @@ ctl.!default {
 `;
   }
 
-  return `# CinemaBooth Projector Appliance - Standard 2.0 Stereo Output
+  return `# CinemaBooth Projector Appliance - Shared HDMI / Stereo Output (dmix)
+pcm.projector_dmix {
+    type dmix
+    ipc_key 1024
+    ipc_perm 0666
+    slave {
+        pcm "hw:${spdifCard},3"
+        period_time 0
+        period_size 1024
+        buffer_size 4096
+        rate 48000
+        channels 2
+    }
+}
+
 pcm.!default {
     type plug
-    slave.pcm "dmix:${spdifCard},0"
+    slave.pcm "projector_dmix"
 }
 
 ctl.!default {
@@ -155,9 +169,9 @@ ctl.!default {
 
 export function buildProjectorDebPackage(config: ApplianceDebConfig): Buffer {
   const mtime = Math.floor(Date.now() / 1000);
-  const cleanServerUrl = (config.serverUrl || 'http://localhost:3000').replace(/\/+$/, '');
+  const cleanServerUrl = (config.serverUrl || 'http://192.168.1.130:31047').replace(/\/+$/, '');
   const cleanDeviceName = config.deviceName || 'CinemaBooth Projector';
-  const audioProfile = config.audioProfile || 'optical-51-ac3';
+  const audioProfile = config.audioProfile || 'stereo-20';
   const spdifCard = config.spdifCard || '0';
   const resolution = config.resolution || 'auto';
 
@@ -173,8 +187,166 @@ THEATER_NAME="${(config.theaterName || 'CinemaBooth Theater').replace(/"/g, '')}
 
   const asoundConf = generateAsoundConf(audioProfile, spdifCard);
 
+  const audioSetupScript = `#!/bin/bash
+# CinemaBooth Automatic Projector Audio Detector & Unmuter (Dual HDMI + Analog Output)
+# Detects the connected HDMI projector port (via ELD monitor_present=1 and aplay -l)
+# plus onboard Analog audio (e.g. CX20632 / ALC Analog), unmutes all IEC958/Speaker/Headphone
+# mixer controls, and configures /etc/asound.conf so Chromium and Librespot play simultaneously.
+set -e
+
+if [ -f /etc/cinemabooth/projector.conf ]; then
+  source /etc/cinemabooth/projector.conf
+fi
+
+# 1. Unmute all HDMI IEC958, Speaker, Headphone, and Master/PCM switches across every sound card
+for c in $(awk '/^ *[0-9]+ \\[/{print $1}' /proc/asound/cards 2>/dev/null); do
+  for idx in 0 1 2 3 4 5; do
+    amixer -c "$c" set 'IEC958',"$idx" unmute >/dev/null 2>&1 || true
+  done
+  amixer -c "$c" set 'IEC958' unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'IEC958 Default PCM' unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'Auto-Mute Mode' Disabled >/dev/null 2>&1 || true
+  amixer -c "$c" -M set 'Master' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'PCM' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'Speaker' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'Headphone' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "$c" set 'Line Out' 90% unmute >/dev/null 2>&1 || true
+done
+
+# 2. If optical-51-ac3 was requested ONLY use it if the a52 plugin is actually installed
+A52_PLUGIN="/usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_a52.so"
+if [ "\${AUDIO_PROFILE}" = "optical-51-ac3" ] && [ -f "\$A52_PLUGIN" ]; then
+  exit 0
+fi
+
+# 3. Auto-detect the connected HDMI audio card and device (e.g. hw:0,3 / hw:0,7 / hw:0,8)
+HDMI_CARD=""
+HDMI_DEV=""
+MONITOR_NAME=""
+
+for card_dir in /proc/asound/card[0-9]*; do
+  [ -d "\$card_dir" ] || continue
+  c_num="\${card_dir#/proc/asound/card}"
+  eld_idx=0
+  for eld_file in \$(ls -1v "\$card_dir"/eld* 2>/dev/null); do
+    eld_idx=\$((eld_idx + 1))
+    if grep -qE '^monitor_present[[:space:]]+1' "\$eld_file" 2>/dev/null; then
+      dev_num=\$(aplay -l 2>/dev/null | awk -v c="\$c_num" '/^card / && \$2 == c":" && /HDMI|DisplayPort/ {gsub(":", "", \$4); print \$4}' | sed -n "\${eld_idx}p")
+      if [ -n "\$dev_num" ]; then
+        HDMI_CARD="\$c_num"
+        HDMI_DEV="\$dev_num"
+        MONITOR_NAME=\$(awk '/^monitor_name/{sub(/^monitor_name[[:space:]]+/, ""); print}' "\$eld_file" 2>/dev/null)
+        break 2
+      fi
+    fi
+  done
+done
+
+if [ -z "\$HDMI_CARD" ] || [ -z "\$HDMI_DEV" ]; then
+  read -r HDMI_CARD HDMI_DEV < <(aplay -l 2>/dev/null | awk '/^card / && /HDMI|DisplayPort/ {gsub(":", "", \$2); gsub(":", "", \$4); print \$2, \$4; exit}') || true
+fi
+
+# 4. Also check if an Analog playback device exists (e.g. card 0, device 0: CX20632 Analog)
+ANALOG_CARD=""
+ANALOG_DEV=""
+read -r ANALOG_CARD ANALOG_DEV < <(aplay -l 2>/dev/null | awk '/^card / && /Analog/ {gsub(":", "", \$2); gsub(":", "", \$4); print \$2, \$4; exit}') || true
+
+if [ -n "\$HDMI_CARD" ] && [ -n "\$HDMI_DEV" ] && [ -n "\$ANALOG_CARD" ] && [ -n "\$ANALOG_DEV" ]; then
+  echo "CinemaBooth Audio Setup: Dual output to HDMI hw:\${HDMI_CARD},\${HDMI_DEV} (\${MONITOR_NAME:-HDMI}) + Analog hw:\${ANALOG_CARD},\${ANALOG_DEV}"
+  cat > /etc/asound.conf <<EOF
+# Auto-configured by cinemabooth-audio-setup: Simultaneous HDMI (hw:\${HDMI_CARD},\${HDMI_DEV}) + Analog (hw:\${ANALOG_CARD},\${ANALOG_DEV})
+pcm.dmix_analog {
+    type dmix
+    ipc_key 1024
+    ipc_perm 0666
+    slave {
+        pcm "hw:\${ANALOG_CARD},\${ANALOG_DEV}"
+        period_time 0
+        period_size 1024
+        buffer_size 4096
+        rate 48000
+        channels 2
+    }
+}
+
+pcm.dmix_hdmi {
+    type dmix
+    ipc_key 1025
+    ipc_perm 0666
+    slave {
+        pcm "hw:\${HDMI_CARD},\${HDMI_DEV}"
+        period_time 0
+        period_size 1024
+        buffer_size 4096
+        rate 48000
+        channels 2
+    }
+}
+
+pcm.dual_out {
+    type multi
+    slaves.a.pcm "dmix_analog"
+    slaves.a.channels 2
+    slaves.b.pcm "dmix_hdmi"
+    slaves.b.channels 2
+    bindings.0.slave a
+    bindings.0.channel 0
+    bindings.1.slave a
+    bindings.1.channel 1
+    bindings.2.slave b
+    bindings.2.channel 0
+    bindings.3.slave b
+    bindings.3.channel 1
+}
+
+pcm.!default {
+    type plug
+    slave.pcm "dual_out"
+    ttable.0.0 1
+    ttable.1.1 1
+    ttable.0.2 1
+    ttable.1.3 1
+}
+
+ctl.!default {
+    type hw
+    card \${ANALOG_CARD}
+}
+EOF
+else
+  TARGET_CARD="\${HDMI_CARD:-\${ANALOG_CARD:-0}}"
+  TARGET_DEV="\${HDMI_DEV:-\${ANALOG_DEV:-0}}"
+  echo "CinemaBooth Audio Setup: Routing audio to hw:\${TARGET_CARD},\${TARGET_DEV} (\${MONITOR_NAME:-Active Output})"
+  cat > /etc/asound.conf <<EOF
+pcm.projector_dmix {
+    type dmix
+    ipc_key 1024
+    ipc_perm 0666
+    slave {
+        pcm "hw:\${TARGET_CARD},\${TARGET_DEV}"
+        period_time 0
+        period_size 1024
+        buffer_size 4096
+        rate 48000
+        channels 2
+    }
+}
+
+pcm.!default {
+    type plug
+    slave.pcm "projector_dmix"
+}
+
+ctl.!default {
+    type hw
+    card \${TARGET_CARD}
+}
+EOF
+fi
+`;
+
   const kioskScript = `#!/bin/bash
-# CinemaBooth Wayland Cage Kiosk Launcher (x86_64 Intel VA-API + 5.1 Surround)
+# CinemaBooth Wayland Cage Kiosk Launcher (x86_64 Intel VA-API + ALSA Audio)
 set -e
 
 if [ -f /etc/cinemabooth/projector.conf ]; then
@@ -183,7 +355,7 @@ fi
 
 CINEMABOOTH_SERVER_URL="\${CINEMABOOTH_SERVER_URL:-${cleanServerUrl}}"
 DISPLAY_RESOLUTION="\${DISPLAY_RESOLUTION:-auto}"
-AUDIO_PROFILE="\${AUDIO_PROFILE:-optical-51-ac3}"
+AUDIO_PROFILE="\${AUDIO_PROFILE:-stereo-20}"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 mkdir -p "$XDG_RUNTIME_DIR"
@@ -192,9 +364,9 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 # Configure Intel VA-API hardware video decoding on x86_64 Mini PCs
 export LIBVA_DRIVER_NAME=iHD
 
-CHROMIUM_AUDIO_FLAGS="--autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream"
+CHROMIUM_AUDIO_FLAGS="--alsa-output-device=default --autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream"
 if [ "$AUDIO_PROFILE" = "optical-51-ac3" ] || [ "$AUDIO_PROFILE" = "hdmi-51-pcm" ]; then
-  CHROMIUM_AUDIO_FLAGS="$CHROMIUM_AUDIO_FLAGS --try-supported-channel-layouts --force-wave-audio"
+  CHROMIUM_AUDIO_FLAGS="$CHROMIUM_AUDIO_FLAGS --try-supported-channel-layouts"
 fi
 
 TARGET_URL="\${CINEMABOOTH_SERVER_URL}/?mode=screen&appliance=true"
@@ -261,6 +433,7 @@ exec "\$LIBRESPOT_BIN" \\
   --name "$SPOTIFY_DEVICE_NAME" \\
   --device-type avr \\
   --backend alsa \\
+  --device default \\
   --bitrate 320 \\
   --initial-volume 80 \\
   --enable-volume-normalisation
@@ -423,8 +596,10 @@ function syncWithServerState(state) {
 function handleCommand(cmd) {
   if (!cmd || !cmd.action) return;
   if (cmd.action === 'restart_kiosk') {
+    runCmd('/usr/bin/cinemabooth-audio-setup || true');
     runCmd('systemctl restart cinemabooth-kiosk.service');
   } else if (cmd.action === 'restart_spotify') {
+    runCmd('/usr/bin/cinemabooth-audio-setup || true');
     runCmd('systemctl restart cinemabooth-spotify.service');
   } else if (cmd.action === 'mute_mic') {
     setHardwareMicMute(true);
@@ -435,7 +610,8 @@ function handleCommand(cmd) {
   }
 }
 
-// Initial hardware state: mute mic on boot, set default volume
+// Initial hardware state: detect & unmute HDMI projector audio, mute mic on boot, set default volume
+runCmd('/usr/bin/cinemabooth-audio-setup || true');
 setHardwareMicMute(true);
 setHardwareVolume(80);
 sendHeartbeat();
@@ -500,16 +676,16 @@ WantedBy=multi-user.target
 `;
 
   const controlFile = `Package: cinemabooth-projector
-Version: 1.0.1
+Version: 1.0.2
 Section: video
 Priority: optional
 Architecture: amd64
 Depends: cage, chromium | chromium-browser, alsa-utils, libasound2-plugins, mesa-va-drivers, wlr-randr, nodejs, avahi-daemon, curl, ca-certificates
 Maintainer: CinemaBooth Theater Systems <support@cinemabooth.local>
-Description: CinemaBooth Native Linux Projector Appliance (Wayland Cage + Librespot + True 5.1 Surround)
+Description: CinemaBooth Native Linux Projector Appliance (Wayland Cage + Librespot + Auto HDMI Audio)
  Turns a minimal Debian/Ubuntu x86_64 Mini PC into a dedicated theater projector
- appliance with Intel VA-API hardware video decoding, Optical S/PDIF AC-3 5.1 or
- HDMI 5.1 surround sound, native librespot Spotify Connect, and hardware mic muting.
+ appliance with Intel VA-API hardware video decoding, automatic HDMI ELD & 5.1 surround
+ audio detection, native librespot Spotify Connect, and hardware mic muting.
 `;
 
   const postinstScript = `#!/bin/bash
@@ -524,10 +700,9 @@ fi
 # Download and extract precompiled librespot binary for Debian 12 amd64
 /usr/bin/cinemabooth-install-librespot || true
 
-# Unmute S/PDIF IEC958 optical output if present
-amixer set 'IEC958' unmute >/dev/null 2>&1 || true
-amixer set 'IEC958',0 unmute >/dev/null 2>&1 || true
-amixer set 'IEC958 Default PCM' unmute >/dev/null 2>&1 || true
+# Auto-detect active HDMI projector audio output, unmute IEC958 switches, and configure shared dmix
+/usr/bin/cinemabooth-audio-setup || true
+
 amixer set Capture nocap >/dev/null 2>&1 || true
 
 # Disable getty@tty1 so Wayland Cage owns the primary HDMI console cleanly
@@ -565,6 +740,7 @@ exit 0
     { name: './usr/', mode: 0o755, type: 'dir' },
     { name: './usr/bin/', mode: 0o755, type: 'dir' },
     { name: './usr/bin/cinemabooth-install-librespot', mode: 0o755, type: 'file', content: Buffer.from(installLibrespotScript, 'utf8') },
+    { name: './usr/bin/cinemabooth-audio-setup', mode: 0o755, type: 'file', content: Buffer.from(audioSetupScript, 'utf8') },
     { name: './usr/bin/cinemabooth-kiosk', mode: 0o755, type: 'file', content: Buffer.from(kioskScript, 'utf8') },
     { name: './usr/bin/cinemabooth-spotify', mode: 0o755, type: 'file', content: Buffer.from(spotifyScript, 'utf8') },
     { name: './usr/bin/cinemabooth-agent', mode: 0o755, type: 'file', content: Buffer.from(agentScript, 'utf8') },
