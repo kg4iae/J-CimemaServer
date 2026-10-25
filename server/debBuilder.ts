@@ -261,6 +261,7 @@ pcm.dmix_analog {
     ipc_perm 0666
     slave {
         pcm "hw:\${ANALOG_CARD},\${ANALOG_DEV}"
+        format S16_LE
         period_time 0
         period_size 1024
         buffer_size 4096
@@ -275,6 +276,7 @@ pcm.dmix_hdmi {
     ipc_perm 0666
     slave {
         pcm "hw:\${HDMI_CARD},\${HDMI_DEV}"
+        format S16_LE
         period_time 0
         period_size 1024
         buffer_size 4096
@@ -299,13 +301,24 @@ pcm.dual_out {
     bindings.3.channel 1
 }
 
-pcm.!default {
-    type plug
+pcm.dual_route {
+    type route
     slave.pcm "dual_out"
+    slave.channels 4
     ttable.0.0 1
     ttable.1.1 1
     ttable.0.2 1
     ttable.1.3 1
+}
+
+pcm.!default {
+    type plug
+    slave {
+        pcm "dual_route"
+        rate 48000
+        format S16_LE
+        channels 2
+    }
 }
 
 ctl.!default {
@@ -324,6 +337,7 @@ pcm.projector_dmix {
     ipc_perm 0666
     slave {
         pcm "hw:\${TARGET_CARD},\${TARGET_DEV}"
+        format S16_LE
         period_time 0
         period_size 1024
         buffer_size 4096
@@ -334,7 +348,12 @@ pcm.projector_dmix {
 
 pcm.!default {
     type plug
-    slave.pcm "projector_dmix"
+    slave {
+        pcm "projector_dmix"
+        rate 48000
+        format S16_LE
+        channels 2
+    }
 }
 
 ctl.!default {
@@ -369,20 +388,72 @@ if [ "$AUDIO_PROFILE" = "optical-51-ac3" ] || [ "$AUDIO_PROFILE" = "hdmi-51-pcm"
   CHROMIUM_AUDIO_FLAGS="$CHROMIUM_AUDIO_FLAGS --try-supported-channel-layouts"
 fi
 
-TARGET_URL="\${CINEMABOOTH_SERVER_URL}/?mode=screen&appliance=true"
+BROWSER_BIN="chromium"
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  BROWSER_BIN="google-chrome-stable"
+fi
 
-exec cage -s -- chromium \\
+# Create lightweight kiosk helper extension to auto-unlock audio & hide cursor in headless production
+EXT_DIR="/tmp/cinemabooth-kiosk-ext"
+mkdir -p "\$EXT_DIR"
+cat > "\$EXT_DIR/manifest.json" << 'EXTEOF'
+{
+  "manifest_version": 3,
+  "name": "CinemaBooth Kiosk Auto-Unlock",
+  "version": "1.0",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["unlock.js"],
+      "css": ["kiosk.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+EXTEOF
+
+cat > "\$EXT_DIR/kiosk.css" << 'EXTEOF'
+* { cursor: none !important; }
+button.animate-bounce { display: none !important; }
+EXTEOF
+
+cat > "\$EXT_DIR/unlock.js" << 'EXTEOF'
+(function() {
+  function autoUnlock() {
+    const btns = document.querySelectorAll('button');
+    btns.forEach((b) => {
+      if (b.textContent && b.textContent.toLowerCase().includes('enable') && b.textContent.toLowerCase().includes('audio')) {
+        b.click();
+      }
+    });
+    if (document.body) {
+      document.body.click();
+    }
+  }
+  autoUnlock();
+  setTimeout(autoUnlock, 500);
+  setTimeout(autoUnlock, 1500);
+  setTimeout(autoUnlock, 3500);
+})();
+EXTEOF
+
+TARGET_URL="\${CINEMABOOTH_SERVER_URL}/?mode=screen"
+
+exec cage -s -- "\$BROWSER_BIN" \\
   --kiosk \\
   --noerrdialogs \\
   --disable-infobars \\
   --no-first-run \\
   --check-for-update-interval=31536000 \\
+  --unsafely-treat-insecure-origin-as-secure="\$CINEMABOOTH_SERVER_URL" \\
+  --disable-features=DisableLoadExtensionCommandLineSwitch \\
+  --load-extension="\$EXT_DIR" \\
   --enable-features=VaapiVideoDecodeLinuxGL,VaapiVideoEncoder,CanvasOopRasterization \\
   --ignore-gpu-blocklist \\
   --enable-gpu-rasterization \\
   --enable-zero-copy \\
-  $CHROMIUM_AUDIO_FLAGS \\
-  "$TARGET_URL"
+  \$CHROMIUM_AUDIO_FLAGS \\
+  "\$TARGET_URL"
 `;
 
   const installLibrespotScript = `#!/bin/bash
@@ -428,15 +499,20 @@ if ! command -v librespot >/dev/null 2>&1 && [ ! -x /usr/local/bin/librespot ]; 
 fi
 
 LIBRESPOT_BIN="\$(command -v librespot || echo /usr/local/bin/librespot)"
+mkdir -p /var/cache/librespot
 
 exec "\$LIBRESPOT_BIN" \\
   --name "$SPOTIFY_DEVICE_NAME" \\
   --device-type avr \\
   --backend alsa \\
   --device default \\
+  --format S16 \\
+  --mixer softvol \\
   --bitrate 320 \\
   --initial-volume 80 \\
-  --enable-volume-normalisation
+  --enable-volume-normalisation \\
+  --cache /var/cache/librespot \\
+  --disable-audio-cache
 `;
 
   const agentScript = `#!/usr/bin/env node
@@ -581,7 +657,8 @@ function syncWithServerState(state) {
       setHardwareVolume(pct);
     }
   }
-  const effectiveSpotify = Boolean(state.spotifyPlaying && !state.isPlaying && !state.karaokeActive);
+  // Keep cinemabooth-spotify.service active whenever no Cinema movie or Karaoke is actively playing
+  const effectiveSpotify = Boolean(!state.isPlaying && !state.karaokeActive);
   if (lastSpotifyPlaying !== effectiveSpotify) {
     lastSpotifyPlaying = effectiveSpotify;
     setLibrespotActive(effectiveSpotify);

@@ -31,7 +31,7 @@ type AutoplayListener = (isBlocked: boolean) => void;
 
 class PreshowAudioEngine {
   private audio: HTMLAudioElement | null = null;
-  private isUnlocked = false;
+  private isUnlocked = true;
   private listeners: Set<AutoplayListener> = new Set();
   private isPlaying = false;
   private targetVolume = 0.8;
@@ -251,13 +251,15 @@ class PreshowAudioEngine {
           this.isUnlocked = true;
           this.notifyListeners();
         })
-        .catch(() => {
-          // If file failed or blocked, try Web Audio synth fallback
-          if (this.audio?.error) {
-            this.startSynthFallback();
-          } else {
+        .catch((err: any) => {
+          if (err?.name === 'NotAllowedError') {
             this.isUnlocked = false;
             this.notifyListeners();
+          } else {
+            // File missing or unsupported format — fall back to synth without showing autoplay prompt
+            this.isUnlocked = true;
+            this.notifyListeners();
+            this.startSynthFallback();
           }
         });
     }

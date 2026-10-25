@@ -160,27 +160,22 @@ export default function ProjectorScreen() {
   };
 
   // Subscribe to browser audio autoplay state and initialize headless Spotify Connect receiver
-  // (In Native Linux Appliance mode, native librespot handles Spotify Connect so we skip the duplicate browser SDK)
   useEffect(() => {
     const unsub = preshowAudio.subscribeAutoplay(setIsAutoplayBlocked);
-    if (!isNativeAppliance) {
-      headlessSpotifyPlayer.init(playback.spotifyVolume ?? 0.8);
-    }
+    headlessSpotifyPlayer.init(playback.spotifyVolume ?? 0.8);
     return unsub;
-  }, [isNativeAppliance]);
+  }, []);
 
   // Synchronize Pre-Show Walk-In Audio engine and Headless Spotify Player with theater state
   useEffect(() => {
     const isSpotifyActive = !playback.isPlaying && !playback.karaokeActive && playback.spotifyPlaying;
     const effectiveSpotifyVol = typeof playback.spotifyVolume === 'number' ? playback.spotifyVolume : playback.volume;
 
-    if (!isNativeAppliance) {
-      headlessSpotifyPlayer.syncState({
-        shouldPlay: isSpotifyActive,
-        volume: effectiveSpotifyVol,
-        isMuted: playback.isMuted,
-      });
-    }
+    headlessSpotifyPlayer.syncState({
+      shouldPlay: isSpotifyActive,
+      volume: effectiveSpotifyVol,
+      isMuted: playback.isMuted,
+    });
 
     preshowAudio.syncState({
       isPlaylistPlaying: playback.isPlaying || Boolean(playback.karaokeActive),
@@ -192,7 +187,6 @@ export default function ProjectorScreen() {
       customAudioUrl: settings.preshow_audio_url,
     });
   }, [
-    isNativeAppliance,
     playback.isPlaying,
     playback.karaokeActive,
     playback.spotifyPlaying,
