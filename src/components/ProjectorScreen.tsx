@@ -159,11 +159,15 @@ export default function ProjectorScreen() {
     }
   };
 
-  // Subscribe to browser audio autoplay state and initialize headless Spotify Connect receiver
+  // Initialize headless Spotify Connect receiver and unlock audio automatically
   useEffect(() => {
-    const unsub = preshowAudio.subscribeAutoplay(setIsAutoplayBlocked);
+    preshowAudio.unlockAudio();
     headlessSpotifyPlayer.init(playback.spotifyVolume ?? 0.8);
-    return unsub;
+    const t = setTimeout(() => {
+      preshowAudio.unlockAudio();
+      headlessSpotifyPlayer.unlockAudio();
+    }, 1000);
+    return () => clearTimeout(t);
   }, []);
 
   // Synchronize Pre-Show Walk-In Audio engine and Headless Spotify Player with theater state
@@ -594,22 +598,6 @@ export default function ProjectorScreen() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Autoplay unlock prompt (only shown if browser suspended audio playback in Cinema mode) */}
-      {!isKaraokeMode && isAutoplayBlocked && !isVideoItem && playback.spotifyPlaying && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            preshowAudio.unlockAudio();
-          }}
-          className="absolute top-6 right-6 z-50 flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-slate-900/90 border border-cyan-400 text-white shadow-2xl backdrop-blur-md cursor-pointer hover:bg-slate-800 transition-all group animate-bounce"
-        >
-          <Volume2 className="w-4 h-4 text-cyan-400 group-hover:scale-110 transition-transform" />
-          <span className="text-xs font-semibold tracking-wide text-cyan-200">
-            Click Screen to Enable Walk-In Audio
-          </span>
-        </button>
       )}
 
       {/* Pre-show audio status monitor in bottom-left */}

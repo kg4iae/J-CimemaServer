@@ -130,10 +130,9 @@ class PreshowAudioEngine {
    */
   public async unlockAudio(): Promise<boolean> {
     if (!this.audio) return false;
+    this.isUnlocked = true;
+    this.notifyListeners();
     try {
-      this.isUnlocked = true;
-      this.notifyListeners();
-
       if (this.synthCtx && this.synthCtx.state === 'suspended') {
         await this.synthCtx.resume().catch(() => {});
       }
@@ -144,9 +143,10 @@ class PreshowAudioEngine {
       }
       return true;
     } catch {
-      this.isUnlocked = false;
-      this.notifyListeners();
-      return false;
+      if (this.isPlaying) {
+        this.startSynthFallback();
+      }
+      return true;
     }
   }
 
@@ -251,16 +251,10 @@ class PreshowAudioEngine {
           this.isUnlocked = true;
           this.notifyListeners();
         })
-        .catch((err: any) => {
-          if (err?.name === 'NotAllowedError') {
-            this.isUnlocked = false;
-            this.notifyListeners();
-          } else {
-            // File missing or unsupported format — fall back to synth without showing autoplay prompt
-            this.isUnlocked = true;
-            this.notifyListeners();
-            this.startSynthFallback();
-          }
+        .catch(() => {
+          this.isUnlocked = true;
+          this.notifyListeners();
+          this.startSynthFallback();
         });
     }
   }

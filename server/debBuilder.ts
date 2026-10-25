@@ -393,49 +393,114 @@ if command -v google-chrome-stable >/dev/null 2>&1; then
   BROWSER_BIN="google-chrome-stable"
 fi
 
-# Create lightweight kiosk helper extension to auto-unlock audio & hide cursor in headless production
-EXT_DIR="/tmp/cinemabooth-kiosk-ext"
-mkdir -p "\$EXT_DIR"
-cat > "\$EXT_DIR/manifest.json" << 'EXTEOF'
-{
-  "manifest_version": 3,
-  "name": "CinemaBooth Kiosk Auto-Unlock",
-  "version": "1.0",
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["unlock.js"],
-      "css": ["kiosk.css"],
-      "run_at": "document_idle"
-    }
-  ]
-}
-EXTEOF
+CHROME_DATA_DIR="/home/projector/.config/cb-chrome"
+mkdir -p "\$CHROME_DATA_DIR"
 
-cat > "\$EXT_DIR/kiosk.css" << 'EXTEOF'
-* { cursor: none !important; }
-button.animate-bounce { display: none !important; }
-EXTEOF
+# Background Chrome DevTools Protocol (CDP) Auto-Unlocker:
+# Dispatches a genuine trusted C++ hardware click (Input.dispatchMouseEvent) & hides any autoplay badge/cursor
+CDP_SCRIPT="\$XDG_RUNTIME_DIR/cinemabooth-cdp-unlock.js"
+cat > "\$CDP_SCRIPT" << 'CDPEOF'
+const http = require('node:http');
+const crypto = require('node:crypto');
 
-cat > "\$EXT_DIR/unlock.js" << 'EXTEOF'
-(function() {
-  function autoUnlock() {
-    const btns = document.querySelectorAll('button');
-    btns.forEach((b) => {
-      if (b.textContent && b.textContent.toLowerCase().includes('enable') && b.textContent.toLowerCase().includes('audio')) {
-        b.click();
-      }
+function sendCdpCommands(wsUrl) {
+  try {
+    const u = new URL(wsUrl);
+    const key = crypto.randomBytes(16).toString('base64');
+    const req = http.request({
+      hostname: u.hostname,
+      port: u.port,
+      path: u.pathname + u.search,
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Key': key,
+        'Sec-WebSocket-Version': '13',
+      },
     });
-    if (document.body) {
-      document.body.click();
-    }
-  }
-  autoUnlock();
-  setTimeout(autoUnlock, 500);
-  setTimeout(autoUnlock, 1500);
-  setTimeout(autoUnlock, 3500);
-})();
-EXTEOF
+    req.on('upgrade', (res, socket) => {
+      function sendJson(obj) {
+        const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+        const mask = crypto.randomBytes(4);
+        let header;
+        if (payload.length < 126) {
+          header = Buffer.alloc(6);
+          header[0] = 0x81;
+          header[1] = 0x80 | payload.length;
+          mask.copy(header, 2);
+        } else {
+          header = Buffer.alloc(8);
+          header[0] = 0x81;
+          header[1] = 0x80 | 126;
+          header.writeUInt16BE(payload.length, 2);
+          mask.copy(header, 4);
+        }
+        const masked = Buffer.alloc(payload.length);
+        for (let i = 0; i < payload.length; i++) masked[i] = payload[i] ^ mask[i % 4];
+        socket.write(Buffer.concat([header, masked]));
+      }
+
+      // Check if this page load has already been unlocked; if not, hide badge/cursor & fire hardware click once
+      const jsExpr = \`
+        (function() {
+          if (!document.getElementById('cb-headless-style')) {
+            const st = document.createElement('style');
+            st.id = 'cb-headless-style';
+            st.textContent = '* { cursor: none !important; } button.animate-bounce { display: none !important; }';
+            if (document.head) document.head.appendChild(st);
+          }
+          document.querySelectorAll('button').forEach(b => {
+            if (b.textContent && b.textContent.toLowerCase().includes('enable') && b.textContent.toLowerCase().includes('audio')) {
+              b.click();
+              b.style.setProperty('display', 'none', 'important');
+            }
+          });
+          if (!window.__cbHeadlessUnlocked && document.body) {
+            window.__cbHeadlessUnlocked = true;
+            document.body.click();
+            return 'NEEDS_HW_CLICK';
+          }
+          return 'ALREADY_UNLOCKED';
+        })();
+      \`;
+      socket.on('data', (chunk) => {
+        const str = chunk.toString('utf8');
+        if (str.includes('NEEDS_HW_CLICK')) {
+          sendJson({ id: 10, method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 10, y: 10, button: 'left', clickCount: 1 } });
+          sendJson({ id: 11, method: 'Input.dispatchMouseEvent', params: { type: 'mouseReleased', x: 10, y: 10, button: 'left', clickCount: 1 } });
+        }
+      });
+      sendJson({ id: 1, method: 'Runtime.evaluate', params: { expression: jsExpr, userGesture: true, returnByValue: true } });
+      setTimeout(() => { try { socket.destroy(); } catch {} }, 500);
+    });
+    req.on('error', () => {});
+    req.end();
+  } catch {}
+}
+
+function pollCdp() {
+  http.get('http://127.0.0.1:9222/json', (res) => {
+    let body = '';
+    res.on('data', (c) => (body += c));
+    res.on('end', () => {
+      try {
+        const pages = JSON.parse(body);
+        for (const p of pages) {
+          if (p.type === 'page' && p.webSocketDebuggerUrl) {
+            sendCdpCommands(p.webSocketDebuggerUrl);
+          }
+        }
+      } catch {}
+    });
+  }).on('error', () => {});
+}
+
+// Run during startup and every 3 seconds to catch any page reload
+[1000, 2000, 3500, 5000].forEach((ms) => setTimeout(pollCdp, ms));
+setInterval(pollCdp, 3000);
+CDPEOF
+
+node "\$CDP_SCRIPT" >/dev/null 2>&1 &
 
 TARGET_URL="\${CINEMABOOTH_SERVER_URL}/?mode=screen"
 
@@ -445,9 +510,10 @@ exec cage -s -- "\$BROWSER_BIN" \\
   --disable-infobars \\
   --no-first-run \\
   --check-for-update-interval=31536000 \\
+  --user-data-dir="\$CHROME_DATA_DIR" \\
+  --remote-debugging-port=9222 \\
+  --remote-allow-origins=* \\
   --unsafely-treat-insecure-origin-as-secure="\$CINEMABOOTH_SERVER_URL" \\
-  --disable-features=DisableLoadExtensionCommandLineSwitch \\
-  --load-extension="\$EXT_DIR" \\
   --enable-features=VaapiVideoDecodeLinuxGL,VaapiVideoEncoder,CanvasOopRasterization \\
   --ignore-gpu-blocklist \\
   --enable-gpu-rasterization \\
@@ -573,6 +639,11 @@ function setHardwareVolume(volPercent) {
 }
 
 function setLibrespotActive(shouldPlay) {
+  // When google-chrome-stable is installed, the official Widevine Spotify Web Playback SDK inside the kiosk handles Spotify Connect
+  if (fs.existsSync('/usr/bin/google-chrome-stable')) {
+    runCmd('systemctl stop cinemabooth-spotify.service || true');
+    return;
+  }
   if (shouldPlay) {
     runCmd('systemctl start cinemabooth-spotify.service || true');
   } else {
@@ -785,9 +856,17 @@ amixer set Capture nocap >/dev/null 2>&1 || true
 # Disable getty@tty1 so Wayland Cage owns the primary HDMI console cleanly
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true
 systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable --now cinemabooth-agent.service >/dev/null 2>&1 || true
-systemctl enable --now cinemabooth-spotify.service >/dev/null 2>&1 || true
-systemctl enable --now cinemabooth-kiosk.service >/dev/null 2>&1 || true
+systemctl enable cinemabooth-agent.service >/dev/null 2>&1 || true
+systemctl enable cinemabooth-kiosk.service >/dev/null 2>&1 || true
+
+if [ -x /usr/bin/google-chrome-stable ]; then
+  systemctl disable --now cinemabooth-spotify.service >/dev/null 2>&1 || true
+else
+  systemctl enable --now cinemabooth-spotify.service >/dev/null 2>&1 || true
+fi
+
+systemctl restart cinemabooth-agent.service >/dev/null 2>&1 || true
+systemctl restart cinemabooth-kiosk.service >/dev/null 2>&1 || true
 
 echo "CinemaBooth Projector Appliance installed and active!"
 exit 0
