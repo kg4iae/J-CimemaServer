@@ -84,6 +84,8 @@ export interface ApplianceStatus {
   ip: string;
   arch: string;
   audioProfile: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  activeAudioDevice?: string;
+  audioDevices?: Array<{ id: string; label: string }>;
   librespotRunning: boolean;
   kioskRunning: boolean;
   micMuted: boolean;
@@ -153,6 +155,7 @@ export interface TheaterSettings {
   karaoke_active?: string;
   appliance_server_url?: string;
   appliance_audio_output?: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  appliance_audio_device?: string;
   appliance_spdif_card?: string;
   appliance_resolution?: string;
   [key: string]: string | undefined;

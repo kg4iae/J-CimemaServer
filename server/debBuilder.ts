@@ -188,38 +188,36 @@ THEATER_NAME="${(config.theaterName || 'CinemaBooth Theater').replace(/"/g, '')}
   const asoundConf = generateAsoundConf(audioProfile, spdifCard);
 
   const audioSetupScript = `#!/bin/bash
-# CinemaBooth Automatic Projector Audio Detector & Unmuter (Dual HDMI + Analog Output)
-# Detects the connected HDMI projector port (via ELD monitor_present=1 and aplay -l)
-# plus onboard Analog audio (e.g. CX20632 / ALC Analog), unmutes all IEC958/Speaker/Headphone
-# mixer controls, and configures /etc/asound.conf so Chromium and Librespot play simultaneously.
+# CinemaBooth Dynamic Projector Audio Switcher & Unmuter
+# Supports on-the-fly switching between:
+#   - hdmi-auto (auto-detects active HDMI display via EDID/ELD)
+#   - hw:X,Y    (explicit ALSA device, e.g. hw:0,3 HDMI 0, hw:0,7 HDMI 1, hw:0,8 HDMI 2, hw:0,0 Analog)
+#   - analog    (onboard 3.5mm Analog output, e.g. hw:0,0)
+#   - dual      (simultaneous HDMI + 3.5mm Analog output)
 set -e
 
 if [ -f /etc/cinemabooth/projector.conf ]; then
   source /etc/cinemabooth/projector.conf
 fi
 
+REQUESTED_DEV="\${1:-\${AUDIO_DEVICE:-hdmi-auto}}"
+
 # 1. Unmute all HDMI IEC958, Speaker, Headphone, and Master/PCM switches across every sound card
-for c in $(awk '/^ *[0-9]+ \\[/{print $1}' /proc/asound/cards 2>/dev/null); do
+for c in \$(awk '/^ *[0-9]+ \\[/{print \$1}' /proc/asound/cards 2>/dev/null); do
   for idx in 0 1 2 3 4 5; do
-    amixer -c "$c" set 'IEC958',"$idx" unmute >/dev/null 2>&1 || true
+    amixer -c "\$c" set 'IEC958',"\$idx" unmute >/dev/null 2>&1 || true
   done
-  amixer -c "$c" set 'IEC958' unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'IEC958 Default PCM' unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'Auto-Mute Mode' Disabled >/dev/null 2>&1 || true
-  amixer -c "$c" -M set 'Master' 90% unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'PCM' 90% unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'Speaker' 90% unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'Headphone' 90% unmute >/dev/null 2>&1 || true
-  amixer -c "$c" set 'Line Out' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'IEC958' unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'IEC958 Default PCM' unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'Auto-Mute Mode' Disabled >/dev/null 2>&1 || true
+  amixer -c "\$c" -M set 'Master' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'PCM' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'Speaker' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'Headphone' 90% unmute >/dev/null 2>&1 || true
+  amixer -c "\$c" set 'Line Out' 90% unmute >/dev/null 2>&1 || true
 done
 
-# 2. If optical-51-ac3 was requested ONLY use it if the a52 plugin is actually installed
-A52_PLUGIN="/usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_a52.so"
-if [ "\${AUDIO_PROFILE}" = "optical-51-ac3" ] && [ -f "\$A52_PLUGIN" ]; then
-  exit 0
-fi
-
-# 3. Auto-detect the connected HDMI audio card and device (e.g. hw:0,3 / hw:0,7 / hw:0,8)
+# 2. Auto-detect connected HDMI card/device and Analog card/device
 HDMI_CARD=""
 HDMI_DEV=""
 MONITOR_NAME=""
@@ -231,11 +229,16 @@ for card_dir in /proc/asound/card[0-9]*; do
   for eld_file in \$(ls -1v "\$card_dir"/eld* 2>/dev/null); do
     eld_idx=\$((eld_idx + 1))
     if grep -qE '^monitor_present[[:space:]]+1' "\$eld_file" 2>/dev/null; then
-      dev_num=\$(aplay -l 2>/dev/null | awk -v c="\$c_num" '/^card / && \$2 == c":" && /HDMI|DisplayPort/ {gsub(":", "", \$4); print \$4}' | sed -n "\${eld_idx}p")
+      MONITOR_NAME=\$(awk '/^monitor_name/{sub(/^monitor_name[[:space:]]+/, ""); print}' "\$eld_file" 2>/dev/null)
+      if [ -n "\$MONITOR_NAME" ]; then
+        dev_num=\$(aplay -l 2>/dev/null | grep -F "[\$MONITOR_NAME]" | awk -v c="\$c_num" '/^card / && \$2 == c":" {gsub(":", "", \$4); print \$4; exit}')
+      fi
+      if [ -z "\$dev_num" ]; then
+        dev_num=\$(aplay -l 2>/dev/null | awk -v c="\$c_num" '/^card / && \$2 == c":" && /HDMI|DisplayPort/ {gsub(":", "", \$4); print \$4}' | sed -n "\${eld_idx}p")
+      fi
       if [ -n "\$dev_num" ]; then
         HDMI_CARD="\$c_num"
         HDMI_DEV="\$dev_num"
-        MONITOR_NAME=\$(awk '/^monitor_name/{sub(/^monitor_name[[:space:]]+/, ""); print}' "\$eld_file" 2>/dev/null)
         break 2
       fi
     fi
@@ -243,18 +246,20 @@ for card_dir in /proc/asound/card[0-9]*; do
 done
 
 if [ -z "\$HDMI_CARD" ] || [ -z "\$HDMI_DEV" ]; then
+  read -r HDMI_CARD HDMI_DEV < <(aplay -l 2>/dev/null | awk '/^card / && /HDMI|DisplayPort/ && !/\\[HDMI [0-9]+\\]/ {gsub(":", "", \$2); gsub(":", "", \$4); print \$2, \$4; exit}') || true
+fi
+if [ -z "\$HDMI_CARD" ] || [ -z "\$HDMI_DEV" ]; then
   read -r HDMI_CARD HDMI_DEV < <(aplay -l 2>/dev/null | awk '/^card / && /HDMI|DisplayPort/ {gsub(":", "", \$2); gsub(":", "", \$4); print \$2, \$4; exit}') || true
 fi
 
-# 4. Also check if an Analog playback device exists (e.g. card 0, device 0: CX20632 Analog)
 ANALOG_CARD=""
 ANALOG_DEV=""
 read -r ANALOG_CARD ANALOG_DEV < <(aplay -l 2>/dev/null | awk '/^card / && /Analog/ {gsub(":", "", \$2); gsub(":", "", \$4); print \$2, \$4; exit}') || true
 
-if [ -n "\$HDMI_CARD" ] && [ -n "\$HDMI_DEV" ] && [ -n "\$ANALOG_CARD" ] && [ -n "\$ANALOG_DEV" ]; then
-  echo "CinemaBooth Audio Setup: Dual output to HDMI hw:\${HDMI_CARD},\${HDMI_DEV} (\${MONITOR_NAME:-HDMI}) + Analog hw:\${ANALOG_CARD},\${ANALOG_DEV}"
+# 3. Route according to REQUESTED_DEV (dual, analog, hw:X,Y, or hdmi-auto)
+if [ "\$REQUESTED_DEV" = "dual" ] && [ -n "\$HDMI_CARD" ] && [ -n "\$ANALOG_CARD" ]; then
+  echo "CinemaBooth Audio Setup: Dual Output -> HDMI hw:\${HDMI_CARD},\${HDMI_DEV} + Analog hw:\${ANALOG_CARD},\${ANALOG_DEV}"
   cat > /etc/asound.conf <<EOF
-# Auto-configured by cinemabooth-audio-setup: Simultaneous HDMI (hw:\${HDMI_CARD},\${HDMI_DEV}) + Analog (hw:\${ANALOG_CARD},\${ANALOG_DEV})
 pcm.dmix_analog {
     type dmix
     ipc_key 1024
@@ -269,7 +274,6 @@ pcm.dmix_analog {
         channels 2
     }
 }
-
 pcm.dmix_hdmi {
     type dmix
     ipc_key 1025
@@ -284,7 +288,6 @@ pcm.dmix_hdmi {
         channels 2
     }
 }
-
 pcm.dual_out {
     type multi
     slaves.a.pcm "dmix_analog"
@@ -300,7 +303,6 @@ pcm.dual_out {
     bindings.3.slave b
     bindings.3.channel 1
 }
-
 pcm.dual_route {
     type route
     slave.pcm "dual_out"
@@ -310,7 +312,6 @@ pcm.dual_route {
     ttable.0.2 1
     ttable.1.3 1
 }
-
 pcm.!default {
     type plug
     slave {
@@ -320,17 +321,29 @@ pcm.!default {
         channels 2
     }
 }
-
 ctl.!default {
     type hw
-    card \${ANALOG_CARD}
+    card \${HDMI_CARD}
 }
 EOF
+  exit 0
+fi
+
+if [ "\$REQUESTED_DEV" = "analog" ]; then
+  TARGET_CARD="\${ANALOG_CARD:-0}"
+  TARGET_DEV="\${ANALOG_DEV:-0}"
+elif [[ "\$REQUESTED_DEV" =~ ^hw:([0-9]+),([0-9]+)\$ ]]; then
+  TARGET_CARD="\${BASH_REMATCH[1]}"
+  TARGET_DEV="\${BASH_REMATCH[2]}"
 else
   TARGET_CARD="\${HDMI_CARD:-\${ANALOG_CARD:-0}}"
-  TARGET_DEV="\${HDMI_DEV:-\${ANALOG_DEV:-0}}"
-  echo "CinemaBooth Audio Setup: Routing audio to hw:\${TARGET_CARD},\${TARGET_DEV} (\${MONITOR_NAME:-Active Output})"
-  cat > /etc/asound.conf <<EOF
+  TARGET_DEV="\${HDMI_DEV:-\${ANALOG_DEV:-3}}"
+fi
+
+echo "CinemaBooth Audio Setup: Routing dedicated audio to hw:\${TARGET_CARD},\${TARGET_DEV} (mode: \${REQUESTED_DEV})"
+
+cat > /etc/asound.conf <<EOF
+# Auto-configured by cinemabooth-audio-setup: Dedicated Audio Output (hw:\${TARGET_CARD},\${TARGET_DEV})
 pcm.projector_dmix {
     type dmix
     ipc_key 1024
@@ -361,7 +374,6 @@ ctl.!default {
     card \${TARGET_CARD}
 }
 EOF
-fi
 `;
 
   const kioskScript = `#!/bin/bash
@@ -599,6 +611,7 @@ function loadConfig() {
     CINEMABOOTH_SERVER_URL: '${cleanServerUrl}',
     SPOTIFY_DEVICE_NAME: '${cleanDeviceName}',
     AUDIO_PROFILE: '${audioProfile}',
+    AUDIO_DEVICE: 'hdmi-auto',
     SPDIF_CARD: '${spdifCard}',
     DISPLAY_RESOLUTION: '${resolution}',
   };
@@ -612,6 +625,22 @@ function loadConfig() {
   return defaults;
 }
 
+function saveConfigValue(key, val) {
+  config[key] = val;
+  try {
+    let raw = '';
+    try { raw = fs.readFileSync('/etc/cinemabooth/projector.conf', 'utf8'); } catch {}
+    const regex = new RegExp(\`^\${key}=.*$\`, 'm');
+    const newLine = \`\${key}="\${val}"\`;
+    if (regex.test(raw)) {
+      raw = raw.replace(regex, newLine);
+    } else {
+      raw = raw.trimEnd() + '\\n' + newLine + '\\n';
+    }
+    fs.writeFileSync('/etc/cinemabooth/projector.conf', raw, 'utf8');
+  } catch {}
+}
+
 let config = loadConfig();
 let micMuted = true;
 let spotifyVolume = 80;
@@ -623,6 +652,25 @@ function runCmd(cmd) {
   } catch {
     return false;
   }
+}
+
+function getAlsaPlaybackDevices() {
+  const list = [
+    { id: 'hdmi-auto', label: 'HDMI (Auto-Detect Active Projector)' },
+    { id: 'analog', label: '3.5mm Analog / Line Out' },
+    { id: 'dual', label: 'Dual Output (HDMI + 3.5mm Analog)' },
+  ];
+  try {
+    const out = execSync('aplay -l', { encoding: 'utf8', timeout: 2000 });
+    out.split('\\n').forEach((line) => {
+      const m = line.match(/^card\\s+(\\d+):\\s+[^,]+,\\s+device\\s+(\\d+):\\s+(.+)$/);
+      if (m) {
+        const hwId = \`hw:\${m[1]},\${m[2]}\`;
+        list.push({ id: hwId, label: \`\${m[3].trim()} (\${hwId})\` });
+      }
+    });
+  } catch {}
+  return list;
 }
 
 function setHardwareMicMute(mute) {
@@ -676,6 +724,8 @@ function sendHeartbeat() {
     ip: getLocalIp(),
     arch: os.arch(),
     audioProfile: config.AUDIO_PROFILE,
+    activeAudioDevice: config.AUDIO_DEVICE || 'hdmi-auto',
+    audioDevices: getAlsaPlaybackDevices(),
     librespotRunning: isServiceActive('cinemabooth-spotify.service'),
     kioskRunning: isServiceActive('cinemabooth-kiosk.service'),
     micMuted,
@@ -743,7 +793,12 @@ function syncWithServerState(state) {
 
 function handleCommand(cmd) {
   if (!cmd || !cmd.action) return;
-  if (cmd.action === 'restart_kiosk') {
+  if (cmd.action === 'set_audio_output' && cmd.audioDevice) {
+    const dev = String(cmd.audioDevice).replace(/[^a-zA-Z0-9:,_-]/g, '');
+    saveConfigValue('AUDIO_DEVICE', dev);
+    runCmd(\`/usr/bin/cinemabooth-audio-setup "\${dev}" || true\`);
+    runCmd('systemctl restart cinemabooth-kiosk.service || true');
+  } else if (cmd.action === 'restart_kiosk') {
     runCmd('/usr/bin/cinemabooth-audio-setup || true');
     runCmd('systemctl restart cinemabooth-kiosk.service');
   } else if (cmd.action === 'restart_spotify') {

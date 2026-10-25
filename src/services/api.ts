@@ -305,14 +305,15 @@ export async function controlKaraoke(
 }
 
 export async function sendApplianceCommand(
-  action: 'speaker_test_51' | 'restart_kiosk' | 'restart_spotify' | 'mute_mic' | 'unmute_mic',
+  action: 'speaker_test_51' | 'restart_kiosk' | 'restart_spotify' | 'mute_mic' | 'unmute_mic' | 'set_audio_output',
   channel?: 'all' | 'fl' | 'c' | 'fr' | 'sl' | 'sr' | 'lfe',
-  volume?: number
+  volume?: number,
+  audioDevice?: string
 ): Promise<{ success: boolean; message?: string }> {
   const res = await fetch(`${API_BASE}/appliance/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, channel, volume }),
+    body: JSON.stringify({ action, channel, volume, audioDevice }),
   });
   return res.json();
 }

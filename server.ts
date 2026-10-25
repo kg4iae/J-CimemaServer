@@ -215,6 +215,8 @@ interface ApplianceRuntimeStatus {
   ip: string;
   arch: string;
   audioProfile: 'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20';
+  activeAudioDevice?: string;
+  audioDevices?: Array<{ id: string; label: string }>;
   librespotRunning: boolean;
   kioskRunning: boolean;
   micMuted: boolean;
@@ -275,6 +277,8 @@ const playbackState: RuntimePlaybackState = {
     ip: '-',
     arch: 'amd64',
     audioProfile: 'optical-51-ac3',
+    activeAudioDevice: 'hdmi-auto',
+    audioDevices: [],
     librespotRunning: false,
     kioskRunning: false,
     micMuted: true,
@@ -649,13 +653,27 @@ app.get('/api/appliance/deb', async (req: Request, res: Response) => {
 
 // Heartbeat endpoint for the native Linux Mini PC agent (cinemabooth-agent.service)
 app.post('/api/appliance/heartbeat', (req: Request, res: Response) => {
-  const { hostname, ip, arch, audioProfile, librespotRunning, kioskRunning, micMuted, spotifyVolume, uptime } = req.body || {};
+  const {
+    hostname,
+    ip,
+    arch,
+    audioProfile,
+    activeAudioDevice,
+    audioDevices,
+    librespotRunning,
+    kioskRunning,
+    micMuted,
+    spotifyVolume,
+    uptime,
+  } = req.body || {};
   playbackState.applianceStatus = {
     connected: true,
     hostname: String(hostname || 'cinemabooth-mini-pc'),
     ip: String(ip || req.ip || '127.0.0.1'),
     arch: String(arch || 'amd64'),
     audioProfile: audioProfile || 'optical-51-ac3',
+    activeAudioDevice: activeAudioDevice || playbackState.applianceStatus.activeAudioDevice || 'hdmi-auto',
+    audioDevices: Array.isArray(audioDevices) ? audioDevices : playbackState.applianceStatus.audioDevices || [],
     librespotRunning: Boolean(librespotRunning),
     kioskRunning: Boolean(kioskRunning),
     micMuted: typeof micMuted === 'boolean' ? micMuted : playbackState.micMuted,
@@ -686,8 +704,8 @@ app.post('/api/appliance/heartbeat', (req: Request, res: Response) => {
 });
 
 // Remote control & 5.1 Surround Speaker Test endpoint (works for BOTH Web Browser Screen and Native Linux Appliance)
-app.post('/api/appliance/command', (req: Request, res: Response) => {
-  const { action, channel, volume } = req.body || {};
+app.post('/api/appliance/command', async (req: Request, res: Response) => {
+  const { action, channel, volume, audioDevice } = req.body || {};
   if (!action) {
     res.status(400).json({ error: 'Action required' });
     return;
@@ -700,9 +718,26 @@ app.post('/api/appliance/command', (req: Request, res: Response) => {
     return;
   }
 
-  pendingApplianceCommands.push({ action, volume });
-  broadcast('APPLIANCE_CMD', { action, volume });
-  res.json({ success: true, queued: true, action });
+  if (action === 'set_audio_output' && audioDevice) {
+    try {
+      const db = await getDatabase();
+      const cleanDev = String(audioDevice).trim();
+      db.run(`
+        INSERT INTO settings (key, value) VALUES ('appliance_audio_device', '${sqlEscape(cleanDev)}')
+        ON CONFLICT(key) DO UPDATE SET value = '${sqlEscape(cleanDev)}'
+      `);
+      saveDatabase();
+      playbackState.applianceStatus.activeAudioDevice = cleanDev;
+      broadcast('SETTINGS_UPDATED', { appliance_audio_device: cleanDev });
+      broadcast('APPLIANCE_STATE', playbackState.applianceStatus);
+    } catch (e) {
+      console.warn('Could not persist appliance_audio_device to SQLite:', e);
+    }
+  }
+
+  pendingApplianceCommands.push({ action, volume, audioDevice });
+  broadcast('APPLIANCE_CMD', { action, volume, audioDevice });
+  res.json({ success: true, queued: true, action, audioDevice });
 });
 
 // Settings GET & POST

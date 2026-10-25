@@ -108,6 +108,10 @@ export default function SettingsTab({
   const [audioProfile, setAudioProfile] = useState<'optical-51-ac3' | 'hdmi-51-pcm' | 'stereo-20'>(
     (settings.appliance_audio_output as any) || 'optical-51-ac3'
   );
+  const [activeAudioDevice, setActiveAudioDevice] = useState<string>(
+    applianceStatus?.activeAudioDevice || settings.appliance_audio_device || 'hdmi-auto'
+  );
+  const [switchingAudio, setSwitchingAudio] = useState<boolean>(false);
   const [spdifCard, setSpdifCard] = useState(settings.appliance_spdif_card || '0');
   const [resolution, setResolution] = useState(settings.appliance_resolution || 'auto');
 
@@ -123,15 +127,40 @@ export default function SettingsTab({
     if (settings.theater_name) setTheaterName(settings.theater_name);
     if (settings.appliance_server_url) setServerUrl(settings.appliance_server_url);
     if (settings.appliance_audio_output) setAudioProfile(settings.appliance_audio_output as any);
+    if (settings.appliance_audio_device) setActiveAudioDevice(settings.appliance_audio_device);
     if (settings.appliance_spdif_card) setSpdifCard(settings.appliance_spdif_card);
     if (settings.appliance_resolution) setResolution(settings.appliance_resolution);
   }, [
     settings.theater_name,
     settings.appliance_server_url,
     settings.appliance_audio_output,
+    settings.appliance_audio_device,
     settings.appliance_spdif_card,
     settings.appliance_resolution,
   ]);
+
+  useEffect(() => {
+    if (applianceStatus?.activeAudioDevice) {
+      setActiveAudioDevice(applianceStatus.activeAudioDevice);
+    }
+  }, [applianceStatus?.activeAudioDevice]);
+
+  const handleSwitchAudioOutputOnTheFly = async (deviceId: string, label: string) => {
+    setActiveAudioDevice(deviceId);
+    setSwitchingAudio(true);
+    try {
+      await sendApplianceCommand('set_audio_output', undefined, undefined, deviceId);
+      setApplianceMessage(
+        `Switched Projector Audio Output to "${label}" (${deviceId}) on the fly! Updating ALSA /etc/asound.conf & restarting kiosk audio...`
+      );
+      setTimeout(() => setApplianceMessage(null), 5000);
+      onRefreshSettings();
+    } catch (e: any) {
+      setApplianceMessage(`Failed to switch audio output: ${e.message}`);
+    } finally {
+      setSwitchingAudio(false);
+    }
+  };
 
   const handleSaveGeneral = async () => {
     try {
@@ -350,10 +379,80 @@ export default function SettingsTab({
             <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2 font-mono tabular-nums">
               <span>Wayland Cage: {applianceStatus?.kioskRunning ? 'Active' : 'Standby'}</span>
               <span>·</span>
-              <span>Librespot Daemon: {applianceStatus?.librespotRunning ? 'Active' : 'Standby'}</span>
+              <span>Active Audio: {activeAudioDevice}</span>
               <span>·</span>
               <span>Hardware Mic: {applianceStatus?.micMuted !== false ? 'Muted' : 'Live (Karaoke)'}</span>
             </div>
+          </div>
+        </div>
+
+        {/* LIVE ON-THE-FLY HARDWARE AUDIO OUTPUT SWITCHER */}
+        <div className="p-5 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-emerald-600" />
+                Live Hardware Audio Output Switcher (Change On The Fly)
+              </h4>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Click any output below to immediately switch <code>/etc/asound.conf</code> on your Mini PC and route projector audio without touching the command line.
+              </p>
+            </div>
+            <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-mono text-[11px] font-bold">
+              Active: {activeAudioDevice}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {(applianceStatus?.audioDevices && applianceStatus.audioDevices.length > 0
+              ? applianceStatus.audioDevices
+              : [
+                  { id: 'hdmi-auto', label: 'HDMI (Auto-Detect Active Projector)' },
+                  { id: 'hw:0,3', label: 'HDMI 0 Output (hw:0,3)' },
+                  { id: 'hw:0,7', label: 'HDMI 1 Output (hw:0,7)' },
+                  { id: 'hw:0,8', label: 'HDMI 2 Output (hw:0,8)' },
+                  { id: 'analog', label: '3.5mm Analog / Line Out (hw:0,0)' },
+                  { id: 'dual', label: 'Dual Output (HDMI + 3.5mm Analog)' },
+                ]
+            ).map((dev) => {
+              const isSelected =
+                activeAudioDevice === dev.id ||
+                (activeAudioDevice === 'analog' && dev.id === 'hw:0,0') ||
+                (activeAudioDevice === 'hw:0,0' && dev.id === 'analog');
+              return (
+                <button
+                  key={dev.id}
+                  type="button"
+                  disabled={switchingAudio}
+                  onClick={() => handleSwitchAudioOutputOnTheFly(dev.id, dev.label)}
+                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm ring-2 ring-emerald-500/30'
+                      : 'bg-white hover:bg-emerald-50/80 text-slate-800 border-slate-200'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold truncate">{dev.label}</div>
+                    <div
+                      className={`text-[10px] font-mono mt-0.5 ${
+                        isSelected ? 'text-emerald-100' : 'text-slate-400'
+                      }`}
+                    >
+                      ALSA Target: {dev.id}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold shrink-0 ${
+                      isSelected
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {isSelected ? 'ACTIVE' : 'Switch'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
